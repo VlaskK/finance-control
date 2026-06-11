@@ -10,7 +10,13 @@ export default defineConfig({
     },
   },
   server: {
+    // Слушаем IPv4-loopback явно: некоторые VPN перехватывают DNS, и имя
+    // localhost перестаёт резолвиться — обращение к 127.0.0.1 минует DNS.
+    host: '127.0.0.1',
     port: 5173,
+    strictPort: true,
+    // HMR-websocket тоже привязываем к IP, иначе живая перезагрузка молчит под VPN.
+    hmr: { host: '127.0.0.1' },
   },
   test: {
     environment: 'node',
