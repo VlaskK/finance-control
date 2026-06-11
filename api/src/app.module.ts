@@ -8,6 +8,7 @@ import { RecurringModule } from './recurring/recurring.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { DataModule } from './data/data.module';
 import { InsightsModule } from './insights/insights.module';
+import { BotModule } from './bot/bot.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { InsightsModule } from './insights/insights.module';
     AnalyticsModule,
     DataModule,
     InsightsModule,
+    BotModule,
   ],
 })
 export class AppModule {}
