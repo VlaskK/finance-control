@@ -1,6 +1,8 @@
 // REST-клиент (§8.7). Ошибки бэка приходят как { message, fieldErrors } (NFR-U2).
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000';
+// По умолчанию ходим в API по IPv4-loopback, а не по имени localhost: под VPN
+// DNS для localhost может ломаться, и обращение по 127.0.0.1 минует резолвинг.
+const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://127.0.0.1:3000';
 
 export class ApiError extends Error {
   constructor(
