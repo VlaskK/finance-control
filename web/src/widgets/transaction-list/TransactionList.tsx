@@ -71,6 +71,18 @@ function TxRow({
         ? 'tx-row__amount tx-row__amount--transfer'
         : 'tx-row__amount';
   const sign = row.type === 'income' ? '+' : row.type === 'transfer' ? '→ ' : '−';
+  const isFx = row.currency !== 'RUB';
+  // Счёт (и маршрут для переводов) — подстрокой; «Общий» без перевода не показываем, чтобы не шуметь
+  const accountInfo =
+    row.type === 'transfer' && row.toAccountName
+      ? `${row.accountName} → ${row.toAccountName}${
+          row.toAmount && row.toCurrency && row.toCurrency !== row.currency
+            ? ` (${formatMoney(row.toAmount, row.toCurrency)})`
+            : ''
+        }`
+      : row.accountName !== 'Общий' || isFx
+        ? row.accountName
+        : null;
 
   return (
     <div className="tx-row">
@@ -87,13 +99,16 @@ function TxRow({
             </span>
           ))}
         </div>
-        {(row.label || row.note) && (
-          <div className="tx-row__sub">{[row.label, row.note].filter(Boolean).join(' — ')}</div>
+        {(row.label || row.note || accountInfo) && (
+          <div className="tx-row__sub">
+            {[accountInfo, row.label, row.note].filter(Boolean).join(' — ')}
+          </div>
         )}
       </div>
       <span className={amountClass}>
         {sign}
-        {formatMoney(row.amount)}
+        {formatMoney(row.amount, row.currency)}
+        {isFx && <span className="muted small"> ≈ {formatMoney(row.baseAmount)}</span>}
       </span>
       <div className="tx-row__actions">
         <button

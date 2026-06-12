@@ -22,6 +22,39 @@ const boolParam = z.preprocess(
   z.boolean(),
 );
 
+// Счета — валюта операции определяется счётом списания
+export const createAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Введите название счёта').max(60),
+  currency: z
+    .string()
+    .trim()
+    .length(3, 'Код валюты — 3 буквы (например, USD)')
+    .transform((s) => s.toUpperCase())
+    .optional(),
+  initialBalance: z.coerce.number().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const updateAccountSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  currency: z
+    .string()
+    .trim()
+    .length(3)
+    .transform((s) => s.toUpperCase())
+    .optional(),
+  initialBalance: z.coerce.number().optional(),
+  sortOrder: z.number().int().optional(),
+  active: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
+});
+
+// Процентная ставка по счёту с датой вступления в силу (история ставок)
+export const setRateSchema = z.object({
+  rate: z.coerce.number().min(0, 'Ставка не может быть отрицательной'),
+  effectiveFrom: isoDate,
+});
+
 // FR-A1 / FR-A6 — создание операции
 export const createTransactionSchema = z.object({
   amount: z.coerce.number().positive('Введите сумму больше нуля'),
@@ -30,7 +63,10 @@ export const createTransactionSchema = z.object({
   occurredAt: isoDate.optional(), // по умолчанию сегодня (FR-A2)
   label: z.string().trim().max(120).optional().nullable(),
   note: z.string().trim().max(500).optional().nullable(),
-  currency: z.string().length(3).optional(),
+  accountId: uuid.optional(), // нет — счёт по умолчанию
+  rate: z.coerce.number().positive('Курс должен быть больше нуля').optional().nullable(),
+  toAccountId: uuid.optional().nullable(), // переводы: счёт зачисления
+  toAmount: z.coerce.number().positive().optional().nullable(),
   recurringId: uuid.optional().nullable(), // BR-12
   tagIds: z.array(uuid).max(20).optional(), // FR-A5 / BR-9
 });
@@ -42,6 +78,7 @@ export const updateTransactionSchema = createTransactionSchema.partial();
 export const listTransactionsSchema = z.object({
   type: txTypeSchema.optional(),
   categoryId: uuid.optional(),
+  accountId: uuid.optional(), // включая входящие переводы на счёт
   from: isoDate.optional(),
   to: isoDate.optional(),
   tagId: uuid.optional(),
@@ -135,8 +172,10 @@ export const importCsvSchema = z.object({
 });
 
 // FR-G3 — восстановление из JSON-бэкапа (формат GET /export?format=json)
+// accounts опциональны — v1-бэкапы (без счетов) принимаются
 export const importJsonSchema = z.object({
   data: z.object({
+    accounts: z.array(z.record(z.any())).optional().default([]),
     categories: z.array(z.record(z.any())),
     transactions: z.array(z.record(z.any())),
     recurringItems: z.array(z.record(z.any())).optional().default([]),
@@ -147,6 +186,9 @@ export const importJsonSchema = z.object({
   }),
 });
 
+export type CreateAccountDto = z.infer<typeof createAccountSchema>;
+export type UpdateAccountDto = z.infer<typeof updateAccountSchema>;
+export type SetRateDto = z.infer<typeof setRateSchema>;
 export type CreateTransactionDto = z.infer<typeof createTransactionSchema>;
 export type UpdateTransactionDto = z.infer<typeof updateTransactionSchema>;
 export type ListTransactionsDto = z.infer<typeof listTransactionsSchema>;

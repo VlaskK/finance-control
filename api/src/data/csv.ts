@@ -102,6 +102,8 @@ const HEADER_ALIASES: Record<string, string[]> = {
   label: ['label', 'метка', 'место'],
   note: ['note', 'примечание', 'комментарий', 'заметка'],
   type: ['type', 'тип'],
+  account: ['account', 'счет', 'счёт'],
+  rate: ['rate', 'курс'],
 };
 
 export function mapHeaders(headerRow: string[]): Record<string, number> {

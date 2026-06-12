@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUnit } from 'effector-react';
 import { $activeTree, $categoryIndex, rootsOfType } from '@/entities/category/model';
+import { $accounts, $activeAccounts, $defaultAccount } from '@/entities/account/model';
 import { $tags } from '@/entities/tag/model';
 import { api, ApiError } from '@/shared/api/client';
 import { Field } from '@/shared/ui/Field';
 import { notify } from '@/shared/ui/toast';
-import { parseAmountInput } from '@/shared/lib/money';
+import { formatMoney, parseAmountInput } from '@/shared/lib/money';
 import { todayIso } from '@/shared/lib/dates';
 import {
   TX_TYPE_LABELS,
@@ -27,16 +28,29 @@ const TYPES: TxType[] = ['expense', 'transfer', 'income'];
 // FR-A1…A6: сумма → категория → Enter; подкатегория/метка/дата — опциональны
 export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
   const [activeTree, categoryIndex, tags] = useUnit([$activeTree, $categoryIndex, $tags]);
+  const [allAccounts, activeAccounts, defaultAccount] = useUnit([
+    $accounts,
+    $activeAccounts,
+    $defaultAccount,
+  ]);
 
   const [type, setType] = useState<TxType>(initial?.type ?? 'expense');
   const [amountStr, setAmountStr] = useState(initial ? String(Number(initial.amount)) : '');
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? '');
   const [subcategoryId, setSubcategoryId] = useState(initial?.subcategoryId ?? '');
+  const [accountId, setAccountId] = useState(initial?.accountId ?? '');
+  const [toAccountId, setToAccountId] = useState(initial?.toAccountId ?? '');
+  const [rateStr, setRateStr] = useState(initial?.rate ? String(Number(initial.rate)) : '');
+  const [toAmountStr, setToAmountStr] = useState(
+    initial?.toAmount ? String(Number(initial.toAmount)) : '',
+  );
   const [occurredAt, setOccurredAt] = useState(initial?.occurredAt ?? todayIso()); // FR-A2
   const [label, setLabel] = useState(initial?.label ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
   const [tagIds, setTagIds] = useState<string[]>(initial?.tags.map((t) => t.id) ?? []);
-  const [errors, setErrors] = useState<{ amount?: string; categoryId?: string }>({});
+  const [errors, setErrors] = useState<{ amount?: string; categoryId?: string; rate?: string }>(
+    {},
+  );
   const [suggestions, setSuggestions] = useState<LabelSuggestion[]>([]);
 
   const amountRef = useRef<HTMLInputElement>(null);
@@ -56,6 +70,46 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
 
   const selectedRoot = roots.find((c) => c.id === categoryId);
   const subcategories = selectedRoot?.children ?? [];
+
+  // Счета для выбора: активные + архивный счёт редактируемой записи (как с категориями)
+  const accountOptions = useMemo(() => {
+    if (initial && !activeAccounts.some((a) => a.id === initial.accountId)) {
+      const archived = allAccounts.find((a) => a.id === initial.accountId);
+      if (archived) return [...activeAccounts, archived];
+    }
+    return activeAccounts;
+  }, [activeAccounts, allAccounts, initial]);
+
+  // Выбранный счёт; пока счета не загружены или ничего не выбрано — основной
+  const account =
+    accountOptions.find((a) => a.id === accountId) ?? defaultAccount ?? null;
+  const toAccount = accountOptions.find((a) => a.id === toAccountId) ?? null;
+  const isFx = account !== null && account.currency !== 'RUB';
+  // Курс нужен: валютный счёт списания, либо перевод RUB → валюта
+  const needRate =
+    isFx ||
+    (type === 'transfer' &&
+      account !== null &&
+      toAccount !== null &&
+      account.currency === 'RUB' &&
+      toAccount.currency !== 'RUB');
+  const rateCurrency = isFx ? account.currency : toAccount?.currency;
+
+  const amountNum = parseAmountInput(amountStr);
+  const rateNum = parseAmountInput(rateStr);
+  // Живой пересчёт: «≈ N ₽» для валютной суммы, зачисление для перевода с конвертацией
+  const baseHint =
+    isFx && amountNum !== null && rateNum !== null ? amountNum * rateNum : null;
+  const computedToAmount = useMemo(() => {
+    if (type !== 'transfer' || account === null || toAccount === null || amountNum === null) {
+      return null;
+    }
+    if (account.currency === toAccount.currency) return amountNum;
+    if (rateNum === null) return null;
+    if (account.currency === 'RUB') return Math.round((amountNum / rateNum) * 100) / 100;
+    if (toAccount.currency === 'RUB') return Math.round(amountNum * rateNum * 100) / 100;
+    return null; // валюта → валюта: зачисление вводится вручную
+  }, [type, account, toAccount, amountNum, rateNum]);
 
   // FR-A4 / BR-7 — автодополнение метки и предзаполнение категории
   useEffect(() => {
@@ -88,18 +142,28 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
     setType(next);
     setCategoryId('');
     setSubcategoryId('');
+    // уход с перевода — поля назначения теряют смысл
+    if (next !== 'transfer') {
+      setToAccountId('');
+      setToAmountStr('');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // FR-A6 — валидация с формулировкой «что сделать»
     const amount = parseAmountInput(amountStr);
+    const rate = parseAmountInput(rateStr);
     const nextErrors: typeof errors = {};
     if (amount === null || amount <= 0) nextErrors.amount = 'Введите сумму больше нуля';
     if (!categoryId) nextErrors.categoryId = 'Выберите категорию';
+    if (needRate && (rate === null || rate <= 0)) {
+      nextErrors.rate = `Укажите курс: сколько рублей за 1 ${rateCurrency}`;
+    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
+    const toAmount = parseAmountInput(toAmountStr);
     const input: CreateTransactionInput = {
       amount: amount!,
       categoryId,
@@ -107,6 +171,10 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
       occurredAt,
       label: label.trim() || null,
       note: note.trim() || null,
+      ...(account && { accountId: account.id }),
+      rate: needRate ? rate : null,
+      toAccountId: type === 'transfer' ? toAccountId || null : null,
+      toAmount: type === 'transfer' && toAccountId ? toAmount : null,
       tagIds,
     };
 
@@ -115,6 +183,7 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
       if (mode === 'create') {
         // FR-A1 — сумма очищается, фокус возвращается для следующего ввода
         setAmountStr('');
+        setToAmountStr('');
         setLabel('');
         setNote('');
         setTagIds([]);
@@ -127,6 +196,7 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
           setErrors({
             amount: err.fieldErrors.amount,
             categoryId: err.fieldErrors.categoryId,
+            rate: err.fieldErrors.rate,
           });
         } else {
           notify(err.message, 'error');
@@ -143,7 +213,10 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
   return (
     <form onSubmit={handleSubmit}>
       <div className="form-row">
-        <Field label="Сумма, ₽" error={errors.amount}>
+        <Field
+          label={`Сумма, ${account?.currency === 'RUB' || !account ? '₽' : account.currency}`}
+          error={errors.amount}
+        >
           <input
             ref={amountRef}
             className="amount-input"
@@ -163,7 +236,67 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
             ))}
           </select>
         </Field>
+        <Field label="Счёт">
+          <select value={account?.id ?? ''} onChange={(e) => setAccountId(e.target.value)}>
+            {accountOptions.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.currency})
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
+
+      {(needRate || (type === 'transfer' && accountOptions.length > 1)) && (
+        <div className="form-row">
+          {type === 'transfer' && accountOptions.length > 1 && (
+            <Field label="На счёт" hint="пусто — перевод вне счетов">
+              <select value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}>
+                <option value="">— вне счетов —</option>
+                {accountOptions
+                  .filter((a) => a.id !== account?.id)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.currency})
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+          {needRate && (
+            <Field label={`Курс, ₽ за 1 ${rateCurrency}`} error={errors.rate}>
+              <input
+                inputMode="decimal"
+                placeholder="90"
+                value={rateStr}
+                onChange={(e) => setRateStr(e.target.value)}
+              />
+            </Field>
+          )}
+          {type === 'transfer' && toAccount && toAccount.currency !== account?.currency && (
+            <Field
+              label={`Зачислено, ${toAccount.currency}`}
+              hint={
+                computedToAmount !== null
+                  ? `по курсу ≈ ${formatMoney(computedToAmount, toAccount.currency)}`
+                  : 'введите вручную'
+              }
+            >
+              <input
+                inputMode="decimal"
+                placeholder={computedToAmount !== null ? String(computedToAmount) : '0'}
+                value={toAmountStr}
+                onChange={(e) => setToAmountStr(e.target.value)}
+              />
+            </Field>
+          )}
+          {baseHint !== null && (
+            <p className="small muted" style={{ alignSelf: 'flex-end', marginBottom: 10 }}>
+              ≈ {formatMoney(baseHint)}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="form-row">
         <Field label="Категория" error={errors.categoryId}>

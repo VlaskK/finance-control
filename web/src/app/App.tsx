@@ -5,6 +5,7 @@ import { HistoryPage } from '@/pages/history/HistoryPage';
 import { ChartsPage } from '@/pages/charts/ChartsPage';
 import { DynamicsPage } from '@/pages/dynamics/DynamicsPage';
 import { BudgetsPage } from '@/pages/budgets/BudgetsPage';
+import { AccountsPage } from '@/pages/accounts/AccountsPage';
 import { CategoriesPage } from '@/pages/categories/CategoriesPage';
 import { DataPage } from '@/pages/data/DataPage';
 
@@ -14,6 +15,7 @@ const NAV = [
   { to: '/charts', label: 'Графики' },
   { to: '/dynamics', label: 'Динамика' },
   { to: '/budgets', label: 'Бюджеты' },
+  { to: '/accounts', label: 'Счета' },
   { to: '/categories', label: 'Категории' },
   { to: '/data', label: 'Данные' },
 ];
@@ -46,6 +48,7 @@ export function App() {
             <Route path="/charts" element={<ChartsPage />} />
             <Route path="/dynamics" element={<DynamicsPage />} />
             <Route path="/budgets" element={<BudgetsPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/data" element={<DataPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

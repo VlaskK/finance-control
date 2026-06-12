@@ -29,11 +29,58 @@ export interface TagRef {
   name: string;
 }
 
+export interface Account {
+  id: string;
+  name: string;
+  currency: string;
+  isDefault: boolean;
+  initialBalance: string;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+  balance: number; // в валюте счёта, считает бэк
+  currentRate: number | null; // годовых %, действует сегодня
+  currentRateFrom: string | null;
+}
+
+export interface AccountRate {
+  id: string;
+  accountId: string;
+  rate: string;
+  effectiveFrom: string;
+  createdAt: string;
+}
+
+export interface CreateAccountInput {
+  name: string;
+  currency?: string;
+  initialBalance?: number;
+  sortOrder?: number;
+}
+
+export interface UpdateAccountInput extends Partial<CreateAccountInput> {
+  active?: boolean;
+  isDefault?: boolean;
+}
+
+export interface SetRateInput {
+  rate: number;
+  effectiveFrom: string;
+}
+
 export interface TransactionRow {
   id: string;
   amount: string;
   occurredAt: string;
   currency: string;
+  accountId: string;
+  accountName: string;
+  toAccountId: string | null;
+  toAccountName: string | null;
+  toAmount: string | null;
+  toCurrency: string | null;
+  rate: string | null;
+  baseAmount: string;
   categoryId: string;
   categoryName: string;
   categoryColor: string;
@@ -54,6 +101,10 @@ export interface CreateTransactionInput {
   occurredAt?: string;
   label?: string | null;
   note?: string | null;
+  accountId?: string;
+  rate?: number | null;
+  toAccountId?: string | null;
+  toAmount?: number | null;
   recurringId?: string | null;
   tagIds?: string[];
 }
@@ -63,6 +114,7 @@ export type UpdateTransactionInput = Partial<CreateTransactionInput>;
 export interface TransactionFilters {
   type?: TxType;
   categoryId?: string;
+  accountId?: string;
   from?: string;
   to?: string;
   tagId?: string;

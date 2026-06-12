@@ -1,15 +1,19 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, gte, ilike, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DB, type Database } from '../database/database.module';
 import {
+  accounts,
   categories,
   labelMap,
   recurringItems,
   tags,
   transactionTags,
   transactions,
+  type Account,
 } from '../database/schema';
+import { AccountsService } from '../accounts/accounts.service';
+import { deriveMoney } from './money';
 import type {
   CreateTransactionDto,
   ListTransactionsDto,
@@ -22,15 +26,33 @@ function today(): string {
 
 @Injectable()
 export class TransactionsService {
-  constructor(@Inject(DB) private readonly db: Database) {}
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    private readonly accounts: AccountsService,
+  ) {}
 
-  // FR-A1 — создание операции. Тип берётся от категории (BR-10 опирается на него).
+  // FR-A1 — создание операции. Тип берётся от категории (BR-10 опирается на него),
+  // валюта — от счёта списания; производные суммы выводит deriveMoney.
   async create(dto: CreateTransactionDto) {
     const [category] = await this.db
       .select()
       .from(categories)
       .where(eq(categories.id, dto.categoryId));
     if (!category) throw new NotFoundException('Категория не найдена');
+
+    const account = dto.accountId
+      ? await this.accounts.findOne(dto.accountId)
+      : await this.accounts.findDefault();
+    const toAccount = await this.resolveToAccount(dto.toAccountId ?? null, account.id);
+
+    const money = deriveMoney({
+      amount: dto.amount,
+      currency: account.currency,
+      type: category.type,
+      rate: dto.rate,
+      toCurrency: toAccount?.currency ?? null,
+      toAmount: dto.toAmount,
+    });
 
     // BR-12 — если метка совпадает с именем регулярной позиции, связываем автоматически
     let recurringId = dto.recurringId ?? null;
@@ -51,7 +73,12 @@ export class TransactionsService {
         occurredAt: dto.occurredAt ?? today(),
         label: dto.label || null,
         note: dto.note || null,
-        currency: dto.currency ?? 'RUB',
+        currency: account.currency,
+        accountId: account.id,
+        toAccountId: toAccount?.id ?? null,
+        toAmount: money.toAmount,
+        rate: money.rate,
+        baseAmount: money.baseAmount,
         recurringId,
       })
       .returning();
@@ -72,6 +99,12 @@ export class TransactionsService {
       // фильтр по категории захватывает и операции её подкатегорий
       conditions.push(
         sql`(${transactions.categoryId} = ${filters.categoryId} or ${transactions.subcategoryId} = ${filters.categoryId})`,
+      );
+    }
+    if (filters.accountId) {
+      // история счёта включает и входящие на него переводы
+      conditions.push(
+        sql`(${transactions.accountId} = ${filters.accountId} or ${transactions.toAccountId} = ${filters.accountId})`,
       );
     }
     if (filters.from) conditions.push(gte(transactions.occurredAt, filters.from));
@@ -96,12 +129,21 @@ export class TransactionsService {
 
   private async query(conditions: SQL[]) {
     const sub = alias(categories, 'sub');
+    const toAcc = alias(accounts, 'to_acc');
     const rows = await this.db
       .select({
         id: transactions.id,
         amount: transactions.amount,
         occurredAt: transactions.occurredAt,
         currency: transactions.currency,
+        accountId: transactions.accountId,
+        accountName: accounts.name,
+        toAccountId: transactions.toAccountId,
+        toAccountName: toAcc.name,
+        toAmount: transactions.toAmount,
+        toCurrency: toAcc.currency,
+        rate: transactions.rate,
+        baseAmount: transactions.baseAmount,
         categoryId: transactions.categoryId,
         categoryName: categories.name,
         categoryColor: categories.color,
@@ -115,16 +157,76 @@ export class TransactionsService {
       })
       .from(transactions)
       .innerJoin(categories, eq(transactions.categoryId, categories.id))
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .leftJoin(sub, eq(transactions.subcategoryId, sub.id))
+      .leftJoin(toAcc, eq(transactions.toAccountId, toAcc.id))
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt));
 
     return this.attachTags(rows);
   }
 
-  // FR-B2 — редактирование любого поля; отчёты пересчитываются сами (агрегаты на чтении)
+  // FR-B2 — редактирование любого поля; отчёты пересчитываются сами (агрегаты на чтении).
+  // Денежные поля не патчатся слепо: итоговое состояние пере-выводится через deriveMoney.
   async update(id: string, dto: UpdateTransactionDto) {
-    await this.ensureExists(id);
+    const existing = await this.ensureExists(id);
+
+    // Итоговые значения после слияния dto поверх существующей строки.
+    const amount = dto.amount ?? Number(existing.amount);
+    const categoryId = dto.categoryId ?? existing.categoryId;
+    const accountId = dto.accountId ?? existing.accountId;
+    const toAccountId =
+      dto.toAccountId !== undefined ? dto.toAccountId : existing.toAccountId;
+
+    const [category] = await this.db
+      .select()
+      .from(categories)
+      .where(eq(categories.id, categoryId));
+    if (!category) throw new NotFoundException('Категория не найдена');
+
+    const account = await this.accounts.findOne(accountId);
+    // Тип ушёл от перевода — поля назначения обнуляются.
+    const toAccount =
+      category.type === 'transfer'
+        ? await this.resolveToAccount(toAccountId, account.id)
+        : null;
+
+    const moneyChanged =
+      dto.amount !== undefined ||
+      dto.categoryId !== undefined ||
+      dto.accountId !== undefined ||
+      dto.toAccountId !== undefined ||
+      dto.toAmount !== undefined ||
+      dto.rate !== undefined;
+
+    // Курс: новый из dto; при смене счёта старый курс не имеет смысла — требуем заново.
+    const rate =
+      dto.rate !== undefined
+        ? dto.rate
+        : dto.accountId !== undefined && dto.accountId !== existing.accountId
+          ? null
+          : existing.rate !== null
+            ? Number(existing.rate)
+            : null;
+    // Сумма зачисления: явная из dto; если деньги не менялись — хранимая (она авторитетна).
+    const toAmount =
+      dto.toAmount !== undefined
+        ? dto.toAmount
+        : !moneyChanged && existing.toAmount !== null
+          ? Number(existing.toAmount)
+          : null;
+
+    const money = moneyChanged
+      ? deriveMoney({
+          amount,
+          currency: account.currency,
+          type: category.type,
+          rate,
+          toCurrency: toAccount?.currency ?? null,
+          toAmount,
+        })
+      : null;
+
     const [row] = await this.db
       .update(transactions)
       .set({
@@ -134,8 +236,15 @@ export class TransactionsService {
         ...(dto.occurredAt !== undefined && { occurredAt: dto.occurredAt }),
         ...(dto.label !== undefined && { label: dto.label || null }),
         ...(dto.note !== undefined && { note: dto.note || null }),
-        ...(dto.currency !== undefined && { currency: dto.currency }),
         ...(dto.recurringId !== undefined && { recurringId: dto.recurringId }),
+        ...(money && {
+          accountId: account.id,
+          currency: account.currency,
+          toAccountId: toAccount?.id ?? null,
+          toAmount: money.toAmount,
+          rate: money.rate,
+          baseAmount: money.baseAmount,
+        }),
       })
       .where(eq(transactions.id, id))
       .returning();
@@ -168,10 +277,23 @@ export class TransactionsService {
 
   private async ensureExists(id: string) {
     const [row] = await this.db
-      .select({ id: transactions.id })
+      .select()
       .from(transactions)
       .where(eq(transactions.id, id));
     if (!row) throw new NotFoundException('Операция не найдена');
+    return row;
+  }
+
+  // Счёт зачисления перевода: null допустим (перевод «вне счетов»), сам в себя — нельзя.
+  private async resolveToAccount(
+    toAccountId: string | null,
+    accountId: string,
+  ): Promise<Account | null> {
+    if (!toAccountId) return null;
+    if (toAccountId === accountId) {
+      throw new BadRequestException('Счёт зачисления должен отличаться от счёта списания');
+    }
+    return this.accounts.findOne(toAccountId);
   }
 
   private async setTags(transactionId: string, tagIds: string[]) {

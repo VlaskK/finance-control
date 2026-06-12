@@ -4,11 +4,20 @@ import { parseAmountInput } from '@/shared/lib/money';
 import type { TransactionRow } from '@/shared/api/types';
 
 function tx(partial: Partial<TransactionRow>): TransactionRow {
+  const amount = partial.amount ?? '100';
   return {
     id: Math.random().toString(36).slice(2),
-    amount: '100',
+    amount,
     occurredAt: '2026-06-11',
     currency: 'RUB',
+    accountId: 'a1',
+    accountName: 'Общий',
+    toAccountId: null,
+    toAccountName: null,
+    toAmount: null,
+    toCurrency: null,
+    rate: null,
+    baseAmount: amount, // RUB: эквивалент равен сумме
     categoryId: 'c1',
     categoryName: 'Продукты',
     categoryColor: '#e74c3c',
@@ -42,6 +51,14 @@ describe('groupByDate (FR-B1)', () => {
       tx({ amount: '200' }),
     ]);
     expect(groups[0].expenseTotal).toBe(500);
+  });
+
+  it('смешанные валюты: итог дня по рублёвому эквиваленту', () => {
+    const groups = groupByDate([
+      tx({ amount: '100' }), // 100 ₽
+      tx({ amount: '10', currency: 'USD', baseAmount: '900', rate: '90' }), // 10 $ ≈ 900 ₽
+    ]);
+    expect(groups[0].expenseTotal).toBe(1000);
   });
 });
 

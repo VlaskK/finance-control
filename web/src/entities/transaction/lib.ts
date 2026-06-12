@@ -6,7 +6,8 @@ export interface DayGroup {
   expenseTotal: number;
 }
 
-// FR-B1 — группировка по дням, новые сверху; итог дня — только потребление (BR-10)
+// FR-B1 — группировка по дням, новые сверху; итог дня — только потребление (BR-10),
+// в рублях по baseAmount — дни со смешанными валютами складываются корректно
 export function groupByDate(rows: TransactionRow[]): DayGroup[] {
   const groups = new Map<string, TransactionRow[]>();
   for (const row of rows) {
@@ -21,6 +22,6 @@ export function groupByDate(rows: TransactionRow[]): DayGroup[] {
       rows: dayRows,
       expenseTotal: dayRows
         .filter((r) => r.type === 'expense')
-        .reduce((acc, r) => acc + Number(r.amount), 0),
+        .reduce((acc, r) => acc + Number(r.baseAmount), 0),
     }));
 }
