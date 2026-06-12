@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from './database/database.module';
+import { AccountsModule } from './accounts/accounts.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BudgetsModule } from './budgets/budgets.module';
@@ -13,6 +14,7 @@ import { BotModule } from './bot/bot.module';
 @Module({
   imports: [
     DatabaseModule,
+    AccountsModule,
     TransactionsModule,
     CategoriesModule,
     BudgetsModule,

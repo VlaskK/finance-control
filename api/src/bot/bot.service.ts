@@ -8,6 +8,7 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { TransactionsService } from '../transactions/transactions.service';
 import { CategoriesService, type CategoryNode } from '../categories/categories.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { AccountsService } from '../accounts/accounts.service';
 import { parseExpenseInput } from './parse';
 import {
   escapeHtml,
@@ -22,7 +23,12 @@ interface PendingExpense {
   label: string | null;
   note: string | null;
   rootId?: string;
+  // выбранная пара категория/подкатегория (после шага категории)
+  subId?: string | null;
   suggestion?: { categoryId: string; subcategoryId: string | null };
+  // выбранный счёт и ожидание ввода курса для валютного счёта
+  accountId?: string;
+  awaitingRate?: boolean;
 }
 
 const HELP = [
@@ -30,6 +36,7 @@ const HELP = [
   '',
   'Чтобы записать трату — пришлите сумму и описание, например:',
   '<code>кофе 200</code> или <code>200 такси домой</code>',
+  'Бот предложит категорию и счёт; для валютного счёта спросит курс.',
   '',
   'Команды:',
   '/today — траты за сегодня',
@@ -50,6 +57,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly transactions: TransactionsService,
     private readonly categories: CategoriesService,
     private readonly analytics: AnalyticsService,
+    private readonly accounts: AccountsService,
   ) {}
 
   async onModuleInit() {
@@ -128,6 +136,21 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private async handleText(ctx: Context) {
     const text = ctx.message?.text ?? '';
+
+    // Ожидаем курс для валютного счёта — это число, а не новая трата
+    const awaiting = this.pending.get(ctx.from!.id);
+    if (awaiting?.awaitingRate) {
+      const rate = Number(text.trim().replace(',', '.'));
+      if (!Number.isFinite(rate) || rate <= 0) {
+        await ctx.reply('Введите курс числом, например: <code>90.5</code>', {
+          parse_mode: 'HTML',
+        });
+        return;
+      }
+      await this.createAndConfirm(ctx, ctx.from!.id, awaiting, rate);
+      return;
+    }
+
     const parsed = parseExpenseInput(text);
     if (!parsed) {
       await ctx.reply(
@@ -207,11 +230,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     // Подтверждение предложенной категории.
     if (data === 'g' && pending.suggestion) {
       await ctx.answerCallbackQuery();
-      await this.createAndConfirm(ctx, userId, {
-        ...pending,
-        rootId: pending.suggestion.categoryId,
-        subId: pending.suggestion.subcategoryId,
-      });
+      await this.afterCategoryChosen(
+        ctx,
+        userId,
+        pending,
+        pending.suggestion.categoryId,
+        pending.suggestion.subcategoryId,
+      );
       return;
     }
 
@@ -231,7 +256,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await ctx.answerCallbackQuery();
 
       if (!children.length) {
-        await this.createAndConfirm(ctx, userId, { ...pending, rootId, subId: null });
+        await this.afterCategoryChosen(ctx, userId, pending, rootId, null);
         return;
       }
       pending.rootId = rootId;
@@ -250,33 +275,96 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (data.startsWith('s:')) {
       const sub = data.slice(2);
       await ctx.answerCallbackQuery();
-      await this.createAndConfirm(ctx, userId, {
-        ...pending,
-        rootId: pending.rootId!,
-        subId: sub === '-' ? null : sub,
-      });
+      await this.afterCategoryChosen(
+        ctx,
+        userId,
+        pending,
+        pending.rootId!,
+        sub === '-' ? null : sub,
+      );
+      return;
+    }
+
+    // Выбор счёта.
+    if (data.startsWith('a:')) {
+      const accountId = data.slice(2);
+      await ctx.answerCallbackQuery();
+      const account = await this.accounts.findOne(accountId);
+      pending.accountId = account.id;
+
+      if (account.currency !== 'RUB') {
+        // Валютный счёт — спрашиваем курс следующим сообщением
+        pending.awaitingRate = true;
+        this.pending.set(userId, pending);
+        await ctx.editMessageText(
+          `Счёт «${escapeHtml(account.name)}» в ${account.currency}.\n` +
+            `Курс: сколько рублей за 1 ${account.currency}? Например: <code>90.5</code>`,
+          { parse_mode: 'HTML' },
+        );
+        return;
+      }
+      await this.createAndConfirm(ctx, userId, pending);
       return;
     }
 
     await ctx.answerCallbackQuery();
   }
 
+  // Категория выбрана: при нескольких счетах — шаг выбора счёта, иначе сразу запись
+  private async afterCategoryChosen(
+    ctx: Context,
+    userId: number,
+    pending: PendingExpense,
+    rootId: string,
+    subId: string | null,
+  ) {
+    pending.rootId = rootId;
+    pending.subId = subId;
+    this.pending.set(userId, pending);
+
+    const active = (await this.accounts.list()).filter((a) => a.active);
+    if (active.length <= 1) {
+      await this.createAndConfirm(ctx, userId, pending);
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    // Основной первым — запись в один тап
+    const ordered = [...active].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    ordered.forEach((a, i) => {
+      const label = `${a.isDefault ? '✅ ' : ''}${a.name} (${a.currency})`;
+      kb.text(label, `a:${a.id}`);
+      if (i % 2 === 1) kb.row();
+    });
+    kb.row().text('Отмена', 'x');
+    await ctx.editMessageText('С какого счёта?', { reply_markup: kb });
+  }
+
   private async createAndConfirm(
     ctx: Context,
     userId: number,
-    data: PendingExpense & { rootId: string; subId: string | null },
+    data: PendingExpense,
+    rate?: number,
   ) {
     this.pending.delete(userId);
     const tx = await this.transactions.create({
       amount: data.amount,
-      categoryId: data.rootId,
-      subcategoryId: data.subId,
+      categoryId: data.rootId!,
+      subcategoryId: data.subId ?? null,
       label: data.label,
       note: data.note,
+      accountId: data.accountId,
+      rate: rate ?? null,
     });
 
-    const alert = await this.budgetAlert(data.rootId);
-    await ctx.editMessageText(formatConfirmation(tx, alert), { parse_mode: 'HTML' });
+    const alert = await this.budgetAlert(data.rootId!);
+    const text = formatConfirmation(tx, alert);
+    // После ввода курса текстом редактировать нечего — отвечаем новым сообщением
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(text, { parse_mode: 'HTML' });
+    } else {
+      await ctx.reply(text, { parse_mode: 'HTML' });
+    }
   }
 
   // Предупреждение, если категория близка к лимиту или превысила его.

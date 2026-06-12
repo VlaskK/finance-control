@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+﻿import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../database/database.module';
 import type {
@@ -24,8 +24,8 @@ import {
   yearsBetween,
 } from './periods';
 
-// Подкатегории сворачиваются на родителя: root = coalesce(parent_id, id).
-// Агрегаты считаются на стороне БД (NFR-P1).
+// РџРѕРґРєР°С‚РµРіРѕСЂРёРё СЃРІРѕСЂР°С‡РёРІР°СЋС‚СЃСЏ РЅР° СЂРѕРґРёС‚РµР»СЏ: root = coalesce(parent_id, id).
+// РђРіСЂРµРіР°С‚С‹ СЃС‡РёС‚Р°СЋС‚СЃСЏ РЅР° СЃС‚РѕСЂРѕРЅРµ Р‘Р” (NFR-P1).
 
 interface CategoryAmountRow {
   categoryId: string;
@@ -53,7 +53,7 @@ interface DynamicsRow {
 export class AnalyticsService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  // Типы операций для выборки: по умолчанию только expense (BR-10), FR-D5 расширяет
+  // РўРёРїС‹ РѕРїРµСЂР°С†РёР№ РґР»СЏ РІС‹Р±РѕСЂРєРё: РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ expense (BR-10), FR-D5 СЂР°СЃС€РёСЂСЏРµС‚
   private typesFilter(dto: { includeTransfers: boolean; includeIncome: boolean }) {
     const types = ["'expense'"];
     if (dto.includeTransfers) types.push("'transfer'");
@@ -61,20 +61,20 @@ export class AnalyticsService {
     return sql.raw(`(${types.join(',')})`);
   }
 
-  // CALC-1 (FR-D2) — траты по категориям за период
+  // CALC-1 (FR-D2) вЂ” С‚СЂР°С‚С‹ РїРѕ РєР°С‚РµРіРѕСЂРёСЏРј Р·Р° РїРµСЂРёРѕРґ
   async byCategory(dto: AnalyticsByCategoryDto) {
     const { from, to } = periodRange(dto.period, dto.date);
     const rows = (await this.db.execute(sql`
       select root.id as "categoryId", root.name as "name", root.color as "color",
              root.type::text as "type",
-             sum(t.amount)::float8 as "amount", count(*)::int as "count"
+             sum(t.base_amount)::float8 as "amount", count(*)::int as "count"
       from transactions t
       join categories c on c.id = t.category_id
       join categories root on root.id = coalesce(c.parent_id, c.id)
       where t.occurred_at between ${from} and ${to}
         and root.type::text in ${this.typesFilter(dto)}
       group by root.id, root.name, root.color, root.type
-      order by sum(t.amount) desc
+      order by sum(t.base_amount) desc
     `)) as unknown as CategoryAmountRow[];
 
     const total = rows
@@ -91,7 +91,7 @@ export class AnalyticsService {
     };
   }
 
-  // FR-D3 — временной ряд внутри периода (день/неделя/месяц → дни, год → месяцы)
+  // FR-D3 вЂ” РІСЂРµРјРµРЅРЅРѕР№ СЂСЏРґ РІРЅСѓС‚СЂРё РїРµСЂРёРѕРґР° (РґРµРЅСЊ/РЅРµРґРµР»СЏ/РјРµСЃСЏС† в†’ РґРЅРё, РіРѕРґ в†’ РјРµСЃСЏС†С‹)
   async series(dto: AnalyticsByCategoryDto) {
     const { from, to } = periodRange(dto.period, dto.date);
     const buckets = periodBuckets(dto.period, dto.date);
@@ -104,7 +104,7 @@ export class AnalyticsService {
       select ${bucketExpr} as "bucket",
              root.id as "categoryId", root.name as "name", root.color as "color",
              root.type::text as "type",
-             sum(t.amount)::float8 as "amount", count(*)::int as "count"
+             sum(t.base_amount)::float8 as "amount", count(*)::int as "count"
       from transactions t
       join categories c on c.id = t.category_id
       join categories root on root.id = coalesce(c.parent_id, c.id)
@@ -126,7 +126,7 @@ export class AnalyticsService {
     };
   }
 
-  // CALC-3/4/5 (FR-E1…E3) — динамика по категориям за диапазон месяцев или лет
+  // CALC-3/4/5 (FR-E1вЂ¦E3) вЂ” РґРёРЅР°РјРёРєР° РїРѕ РєР°С‚РµРіРѕСЂРёСЏРј Р·Р° РґРёР°РїР°Р·РѕРЅ РјРµСЃСЏС†РµРІ РёР»Рё Р»РµС‚
   async dynamics(dto: DynamicsDto) {
     const { from, to } = monthRangeBounds(dto.from, dto.to);
     const periods =
@@ -141,7 +141,7 @@ export class AnalyticsService {
     const rows = (await this.db.execute(sql`
       select ${periodExpr} as "period",
              root.id as "categoryId", root.name as "name", root.color as "color",
-             sum(t.amount)::float8 as "spend", count(*)::int as "count"
+             sum(t.base_amount)::float8 as "spend", count(*)::int as "count"
       from transactions t
       join categories c on c.id = t.category_id
       join categories root on root.id = coalesce(c.parent_id, c.id)
@@ -183,7 +183,7 @@ export class AnalyticsService {
           avgTicketSmoothed: smoothed[i],
           spendIndex: indices[i],
           changePct: indices[i] === null ? null : Math.round((indices[i]! - 100) * 100) / 100,
-          // CALC-5 — разложение vs базовый период (для базового и пустой базы — null)
+          // CALC-5 вЂ” СЂР°Р·Р»РѕР¶РµРЅРёРµ vs Р±Р°Р·РѕРІС‹Р№ РїРµСЂРёРѕРґ (РґР»СЏ Р±Р°Р·РѕРІРѕРіРѕ Рё РїСѓСЃС‚РѕР№ Р±Р°Р·С‹ вЂ” null)
           decomposition:
             i === 0 || base.count === 0
               ? null
@@ -203,7 +203,7 @@ export class AnalyticsService {
     return { periods, granularity: dto.granularity, categories };
   }
 
-  // CALC-6 (FR-E4) — индекс личной инфляции по фикс-позициям (BR-12)
+  // CALC-6 (FR-E4) вЂ” РёРЅРґРµРєСЃ Р»РёС‡РЅРѕР№ РёРЅС„Р»СЏС†РёРё РїРѕ С„РёРєСЃ-РїРѕР·РёС†РёСЏРј (BR-12)
   async inflation(dto: InflationDto) {
     const months = monthsBetween(dto.from, dto.to);
     const { from, to } = monthRangeBounds(dto.from, dto.to);
@@ -215,10 +215,10 @@ export class AnalyticsService {
       order by r.name
     `)) as unknown as { id: string; name: string }[];
 
-    // Цена позиции в месяце — среднее по её операциям (обычно операция одна)
+    // Р¦РµРЅР° РїРѕР·РёС†РёРё РІ РјРµСЃСЏС†Рµ вЂ” СЃСЂРµРґРЅРµРµ РїРѕ РµС‘ РѕРїРµСЂР°С†РёСЏРј (РѕР±С‹С‡РЅРѕ РѕРїРµСЂР°С†РёСЏ РѕРґРЅР°)
     const priceRows = (await this.db.execute(sql`
       select r.id as "id", to_char(t.occurred_at, 'YYYY-MM') as "month",
-             avg(t.amount)::float8 as "price"
+             avg(t.base_amount)::float8 as "price"
       from recurring_items r
       join transactions t on t.recurring_id = r.id
       where r.is_fixed_price = true
@@ -244,7 +244,7 @@ export class AnalyticsService {
     const yoy = percentChange(cpi, 12);
 
     return {
-      // Заглушка с объяснением показывается фронтом, когда available = false (FR-E4)
+      // Р—Р°РіР»СѓС€РєР° СЃ РѕР±СЉСЏСЃРЅРµРЅРёРµРј РїРѕРєР°Р·С‹РІР°РµС‚СЃСЏ С„СЂРѕРЅС‚РѕРј, РєРѕРіРґР° available = false (FR-E4)
       available: items.length > 0,
       fixedItemsTotal: fixedItems.length,
       months,
@@ -258,14 +258,14 @@ export class AnalyticsService {
     };
   }
 
-  // CALC-2 (FR-D4) — план/факт по бюджетам за месяц
+  // CALC-2 (FR-D4) вЂ” РїР»Р°РЅ/С„Р°РєС‚ РїРѕ Р±СЋРґР¶РµС‚Р°Рј Р·Р° РјРµСЃСЏС†
   async budgetStatus(dto: BudgetStatusDto) {
     const { from, to } = monthRangeBounds(dto.month, dto.month);
     const rows = (await this.db.execute(sql`
       select b.category_id as "categoryId", b.monthly_limit::float8 as "monthlyLimit",
              cat.name as "categoryName", cat.color as "categoryColor",
              coalesce((
-               select sum(t.amount) from transactions t
+               select sum(t.base_amount) from transactions t
                where (t.category_id = b.category_id or t.subcategory_id = b.category_id)
                  and t.occurred_at between ${from} and ${to}
              ), 0)::float8 as "fact"

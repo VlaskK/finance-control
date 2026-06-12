@@ -9,6 +9,7 @@ import {
   transactionsInvalidated,
 } from '@/entities/transaction/model';
 import { $categoryTree } from '@/entities/category/model';
+import { $accounts } from '@/entities/account/model';
 import { $tags } from '@/entities/tag/model';
 import { Field } from '@/shared/ui/Field';
 import { formatMoney } from '@/shared/lib/money';
@@ -16,15 +17,22 @@ import { TX_TYPE_LABELS, type TxType } from '@/shared/api/types';
 
 // FR-B1 — история; FR-B4 — фильтры; FR-B5 — поиск по метке
 export function HistoryPage() {
-  const [filters, rows, tree, tags] = useUnit([$filters, $transactions, $categoryTree, $tags]);
+  const [filters, rows, tree, accounts, tags] = useUnit([
+    $filters,
+    $transactions,
+    $categoryTree,
+    $accounts,
+    $tags,
+  ]);
 
   useEffect(() => {
     transactionsInvalidated();
   }, []);
 
+  // потребление — в рублях по эквиваленту (валютные траты не искажают сумму)
   const expenseTotal = rows
     .filter((r) => r.type === 'expense')
-    .reduce((acc, r) => acc + Number(r.amount), 0);
+    .reduce((acc, r) => acc + Number(r.baseAmount), 0);
 
   return (
     <>
@@ -64,6 +72,21 @@ export function HistoryPage() {
               ))}
             </select>
           </Field>
+          {accounts.length > 1 && (
+            <Field label="Счёт">
+              <select
+                value={filters.accountId ?? ''}
+                onChange={(e) => filtersChanged({ accountId: e.target.value || undefined })}
+              >
+                <option value="">Все</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.currency})
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="С даты">
             <input
               type="date"

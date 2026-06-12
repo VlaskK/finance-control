@@ -15,6 +15,32 @@ import {
 // Тип операции — глоссарий §3 / BR-10
 export const transactionType = pgEnum('transaction_type', ['expense', 'transfer', 'income']);
 
+// Счета — деньги списываются/зачисляются на конкретный счёт; ровно один основной
+// (частичный уникальный индекс задаётся в миграции 0001).
+export const accounts = pgTable('accounts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull(),
+  currency: text('currency').notNull().default('RUB'),
+  isDefault: boolean('is_default').notNull().default(false),
+  initialBalance: numeric('initial_balance', { precision: 12, scale: 2 }).notNull().default('0'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  active: boolean('active').notNull().default(true),
+  // Дата, по которую проценты уже начислены (null = ещё ни разу)
+  interestAccruedThru: date('interest_accrued_thru'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// История процентных ставок по счёту — ставка дня d = запись с макс. effective_from <= d
+export const accountInterestRates = pgTable('account_interest_rates', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: uuid('account_id')
+    .notNull()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  rate: numeric('rate', { precision: 6, scale: 3 }).notNull(), // годовых %
+  effectiveFrom: date('effective_from').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // §8.6 categories — двухуровневое дерево с типами
 export const categories = pgTable('categories', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -42,8 +68,17 @@ export const recurringItems = pgTable('recurring_items', {
 export const transactions = pgTable('transactions', {
   id: uuid('id').defaultRandom().primaryKey(),
   occurredAt: date('occurred_at').notNull(), // по умолчанию сегодня (задаётся на уровне сервиса)
-  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
-  currency: text('currency').notNull().default('RUB'),
+  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(), // в валюте счёта списания
+  currency: text('currency').notNull().default('RUB'), // проставляется сервером из счёта
+  accountId: uuid('account_id')
+    .notNull()
+    .references(() => accounts.id),
+  // Переводы: куда зачислено (nullable — перевод «вне счетов» допустим) и сколько
+  // в валюте счёта-получателя; rate — ₽ за 1 единицу валюты счёта списания.
+  toAccountId: uuid('to_account_id').references(() => accounts.id),
+  toAmount: numeric('to_amount', { precision: 12, scale: 2 }),
+  rate: numeric('rate', { precision: 14, scale: 6 }),
+  baseAmount: numeric('base_amount', { precision: 12, scale: 2 }).notNull(), // рублёвый эквивалент
   categoryId: uuid('category_id')
     .notNull()
     .references(() => categories.id), // BR-1
@@ -112,9 +147,27 @@ export const transactionsRelations = relations(transactions, ({ one, many }) => 
     fields: [transactions.subcategoryId],
     references: [categories.id],
   }),
+  account: one(accounts, {
+    fields: [transactions.accountId],
+    references: [accounts.id],
+    relationName: 'tx_account',
+  }),
+  toAccount: one(accounts, {
+    fields: [transactions.toAccountId],
+    references: [accounts.id],
+    relationName: 'tx_to_account',
+  }),
   tags: many(transactionTags),
 }));
 
+export const accountsRelations = relations(accounts, ({ many }) => ({
+  transactions: many(transactions, { relationName: 'tx_account' }),
+  incomingTransfers: many(transactions, { relationName: 'tx_to_account' }),
+}));
+
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
+export type AccountInterestRate = typeof accountInterestRates.$inferSelect;
 export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
 export type Transaction = typeof transactions.$inferSelect;

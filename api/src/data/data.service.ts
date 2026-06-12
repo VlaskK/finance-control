@@ -3,6 +3,7 @@ import { asc, desc, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DB, type Database } from '../database/database.module';
 import {
+  accounts,
   budgets,
   categories,
   labelMap,
@@ -11,6 +12,7 @@ import {
   transactionTags,
   transactions,
 } from '../database/schema';
+import { deriveMoney } from '../transactions/money';
 import type { ImportCsvDto, ImportJsonDto } from '../common/schemas';
 import { mapHeaders, parseAmount, parseCsv, parseDateCell, parseTypeCell, toCsv } from './csv';
 
@@ -20,19 +22,22 @@ export class DataService {
 
   // FR-G1 — полный JSON-бэкап (формат принимает обратно restoreJson, FR-G3)
   async exportJson() {
-    const [cats, txs, recurring, labels, allTags, txTags, allBudgets] = await Promise.all([
-      this.db.select().from(categories).orderBy(asc(categories.sortOrder)),
-      this.db.select().from(transactions).orderBy(asc(transactions.occurredAt)),
-      this.db.select().from(recurringItems),
-      this.db.select().from(labelMap),
-      this.db.select().from(tags),
-      this.db.select().from(transactionTags),
-      this.db.select().from(budgets),
-    ]);
+    const [cats, txs, recurring, labels, allTags, txTags, allBudgets, allAccounts] =
+      await Promise.all([
+        this.db.select().from(categories).orderBy(asc(categories.sortOrder)),
+        this.db.select().from(transactions).orderBy(asc(transactions.occurredAt)),
+        this.db.select().from(recurringItems),
+        this.db.select().from(labelMap),
+        this.db.select().from(tags),
+        this.db.select().from(transactionTags),
+        this.db.select().from(budgets),
+        this.db.select().from(accounts).orderBy(asc(accounts.sortOrder)),
+      ]);
     return {
       app: 'finflow',
-      version: 1,
+      version: 2, // v2 — добавлены счета; restoreJson принимает и v1
       exportedAt: new Date().toISOString(),
+      accounts: allAccounts,
       categories: cats,
       transactions: txs,
       recurringItems: recurring,
@@ -43,9 +48,10 @@ export class DataService {
     };
   }
 
-  // FR-G1 — операции в CSV (формат совместим с импортом FR-G2)
+  // FR-G1 — операции в CSV (формат совместим с импортом FR-G2; новые колонки — в конец)
   async exportCsv(): Promise<string> {
     const sub = alias(categories, 'sub');
+    const toAcc = alias(accounts, 'to_acc');
     const rows = await this.db
       .select({
         occurredAt: transactions.occurredAt,
@@ -56,14 +62,24 @@ export class DataService {
         subcategory: sub.name,
         label: transactions.label,
         note: transactions.note,
+        account: accounts.name,
+        toAccount: toAcc.name,
+        toAmount: transactions.toAmount,
+        rate: transactions.rate,
+        baseAmount: transactions.baseAmount,
       })
       .from(transactions)
       .innerJoin(categories, eq(transactions.categoryId, categories.id))
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .leftJoin(sub, eq(transactions.subcategoryId, sub.id))
+      .leftJoin(toAcc, eq(transactions.toAccountId, toAcc.id))
       .orderBy(desc(transactions.occurredAt));
 
     return toCsv([
-      ['date', 'amount', 'currency', 'type', 'category', 'subcategory', 'label', 'note'],
+      [
+        'date', 'amount', 'currency', 'type', 'category', 'subcategory', 'label', 'note',
+        'account', 'toAccount', 'toAmount', 'rate', 'baseAmount',
+      ],
       ...rows.map((r) => [
         r.occurredAt,
         r.amount,
@@ -73,6 +89,11 @@ export class DataService {
         r.subcategory,
         r.label,
         r.note,
+        r.account,
+        r.toAccount,
+        r.toAmount,
+        r.rate,
+        r.baseAmount,
       ]),
     ]);
   }
@@ -99,6 +120,13 @@ export class DataService {
     const catByKey = new Map(
       allCats.map((c) => [`${c.parentId ?? 'root'}|${c.name.trim().toLowerCase()}`, c]),
     );
+
+    const allAccounts = await this.db.select().from(accounts);
+    const defaultAccount = allAccounts.find((a) => a.isDefault);
+    if (!defaultAccount) {
+      throw new BadRequestException('Основной счёт не найден — выполните сидинг');
+    }
+    const accountByName = new Map(allAccounts.map((a) => [a.name.trim().toLowerCase(), a]));
 
     const resolveCategory = async (
       name: string,
@@ -147,6 +175,29 @@ export class DataService {
       const subName = cell(row, 'subcategory');
       const sub = subName ? await resolveCategory(subName, parent.type, parent.id) : null;
 
+      // Счёт — по имени; не найден или не указан → основной
+      const accountName = cell(row, 'account');
+      const account = accountName
+        ? (accountByName.get(accountName.toLowerCase()) ?? defaultAccount)
+        : defaultAccount;
+      const rate = parseAmount(cell(row, 'rate'));
+
+      let money;
+      try {
+        money = deriveMoney({
+          amount,
+          currency: account.currency,
+          type: parent.type,
+          rate,
+        });
+      } catch {
+        skipped.push({
+          line,
+          reason: `Счёт «${account.name}» в ${account.currency} — укажите курс (колонка rate/курс)`,
+        });
+        continue;
+      }
+
       await this.db.insert(transactions).values({
         occurredAt,
         amount: amount.toFixed(2),
@@ -154,6 +205,10 @@ export class DataService {
         subcategoryId: sub?.id ?? null,
         label: cell(row, 'label') || null,
         note: cell(row, 'note') || null,
+        currency: account.currency,
+        accountId: account.id,
+        rate: money.rate,
+        baseAmount: money.baseAmount,
       });
       imported++;
     }
@@ -165,6 +220,7 @@ export class DataService {
   // (подтверждение запрашивает фронт)
   async restoreJson(dto: ImportJsonDto) {
     const d = dto.data;
+    let generalId: string | undefined;
     await this.db.transaction(async (tx) => {
       await tx.delete(transactionTags);
       await tx.delete(transactions);
@@ -173,6 +229,29 @@ export class DataService {
       await tx.delete(recurringItems);
       await tx.delete(tags);
       await tx.delete(categories);
+      await tx.delete(accounts);
+
+      // Счета — до транзакций (FK). v1-бэкап без счетов → синтезируем «Общий».
+      if (d.accounts.length) {
+        for (const a of d.accounts) {
+          await tx.insert(accounts).values({
+            id: a.id,
+            name: a.name,
+            currency: a.currency ?? 'RUB',
+            isDefault: a.isDefault ?? false,
+            initialBalance: a.initialBalance ?? '0',
+            sortOrder: a.sortOrder ?? 0,
+            active: a.active ?? true,
+          });
+        }
+        generalId = d.accounts.find((a) => a.isDefault)?.id ?? d.accounts[0].id;
+      } else {
+        const [general] = await tx
+          .insert(accounts)
+          .values({ name: 'Общий', currency: 'RUB', isDefault: true })
+          .returning();
+        generalId = general.id;
+      }
 
       // родители раньше детей — FK на parent_id
       const cats = [...d.categories].sort((a, b) =>
@@ -208,6 +287,11 @@ export class DataService {
           occurredAt: t.occurredAt,
           amount: t.amount,
           currency: t.currency ?? 'RUB',
+          accountId: t.accountId ?? generalId!,
+          toAccountId: t.toAccountId ?? null,
+          toAmount: t.toAmount ?? null,
+          rate: t.rate ?? null,
+          baseAmount: t.baseAmount ?? t.amount, // v1 — всё в рублях
           categoryId: t.categoryId,
           subcategoryId: t.subcategoryId ?? null,
           label: t.label ?? null,

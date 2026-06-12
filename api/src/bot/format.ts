@@ -75,6 +75,8 @@ export function formatBudget(data: BudgetResult): string {
 interface CreatedTx {
   amount: string;
   currency: string;
+  baseAmount: string;
+  accountName: string;
   categoryName: string;
   subcategoryName: string | null;
   label: string | null;
@@ -85,7 +87,10 @@ export function formatConfirmation(tx: CreatedTx, budgetAlert?: string): string 
     ? `${escapeHtml(tx.categoryName)} / ${escapeHtml(tx.subcategoryName)}`
     : escapeHtml(tx.categoryName);
   const label = tx.label ? ` «${escapeHtml(tx.label)}»` : '';
-  let msg = `✅ Записал: <b>${formatAmount(Number(tx.amount), tx.currency)}</b> — ${cat}${label}`;
+  const fx = tx.currency !== 'RUB' ? ` ≈ ${formatAmount(Number(tx.baseAmount))}` : '';
+  let msg =
+    `✅ Записал: <b>${formatAmount(Number(tx.amount), tx.currency)}</b>${fx} — ${cat}${label}` +
+    `\nСчёт: ${escapeHtml(tx.accountName)}`;
   if (budgetAlert) msg += `\n\n${budgetAlert}`;
   return msg;
 }

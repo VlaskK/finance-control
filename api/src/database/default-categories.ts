@@ -110,4 +110,10 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
     description: 'Поступления.',
     children: ['Зарплата', 'Премия/бонус', 'Подработка', 'Возвраты/кэшбэк'],
   },
+  {
+    name: 'Проценты',
+    type: 'income',
+    color: '#1abc9c',
+    description: 'Проценты по счетам — начисляются автоматически.',
+  },
 ];
