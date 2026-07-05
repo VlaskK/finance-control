@@ -1,0 +1,14 @@
+# Production-оверрайд для сервера (Timeweb Cloud), режим «только бот».
+# Наружу ничего не публикуем: бот ходит к Telegram сам (long polling),
+# входящие порты не нужны. Postgres и API общаются внутри docker-сети.
+#
+# Запуск на сервере:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  postgres:
+    # убираем публикацию 5432 наружу — БД доступна только другим контейнерам
+    ports: []
+
+  api:
+    # убираем публикацию 3000 наружу — публичного (неаутентифицированного) API нет
+    ports: []

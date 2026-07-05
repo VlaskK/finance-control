@@ -26,6 +26,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file: ./api/.env
     environment:
       DATABASE_URL: postgres://finflow:finflow@postgres:5432/finflow
       PORT: "3000"
