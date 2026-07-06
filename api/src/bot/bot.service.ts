@@ -1,35 +1,19 @@
+// Бутстрап Telegram-бота (grammY, long polling внутри процесса API) и роутинг апдейтов.
+// Логика диалогов живёт в handlers/*; здесь — allowlist, команды, диспетчеризация
+// callback'ов (глобальные x/noop — тут, остальные — по session.mode) и статистика.
+
 import {
   Injectable,
   Logger,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { Bot, InlineKeyboard, type Context } from 'grammy';
-import { TransactionsService } from '../transactions/transactions.service';
-import { CategoriesService, type CategoryNode } from '../categories/categories.service';
+import { Bot, type Context } from 'grammy';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { AccountsService } from '../accounts/accounts.service';
-import { parseExpenseInput } from './parse';
-import {
-  escapeHtml,
-  formatAmount,
-  formatBreakdown,
-  formatBudget,
-  formatConfirmation,
-} from './format';
-
-interface PendingExpense {
-  amount: number;
-  label: string | null;
-  note: string | null;
-  rootId?: string;
-  // выбранная пара категория/подкатегория (после шага категории)
-  subId?: string | null;
-  suggestion?: { categoryId: string; subcategoryId: string | null };
-  // выбранный счёт и ожидание ввода курса для валютного счёта
-  accountId?: string;
-  awaitingRate?: boolean;
-}
+import { formatBreakdown, formatBudget } from './format';
+import { SessionStore } from './session';
+import { CB } from './callbacks';
+import { EntryHandler } from './handlers/entry.handler';
 
 const HELP = [
   '💸 <b>FinFlow-бот</b>',
@@ -50,14 +34,12 @@ const HELP = [
 export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotService.name);
   private bot?: Bot;
-  private readonly pending = new Map<number, PendingExpense>();
   private allowed = new Set<number>();
 
   constructor(
-    private readonly transactions: TransactionsService,
-    private readonly categories: CategoriesService,
     private readonly analytics: AnalyticsService,
-    private readonly accounts: AccountsService,
+    private readonly sessions: SessionStore,
+    private readonly entry: EntryHandler,
   ) {}
 
   async onModuleInit() {
@@ -101,8 +83,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     bot.command('stats', (ctx) => this.handleStatsAndBudget(ctx));
     bot.command('budget', (ctx) => this.handleBudget(ctx));
 
-    bot.on('callback_query:data', (ctx) => this.handleCallback(ctx));
-    bot.on('message:text', (ctx) => this.handleText(ctx));
+    bot.on('callback_query:data', (ctx) => this.routeCallback(ctx));
+    bot.on('message:text', (ctx) => this.routeText(ctx));
 
     bot.catch((err) => this.logger.error(`Ошибка бота: ${err.message}`, err.error as Error));
 
@@ -132,261 +114,40 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (this.bot) await this.bot.stop();
   }
 
-  // ——— Ввод траты ———
+  // ——— Роутинг ———
 
-  private async handleText(ctx: Context) {
-    const text = ctx.message?.text ?? '';
-
-    // Ожидаем курс для валютного счёта — это число, а не новая трата
-    const awaiting = this.pending.get(ctx.from!.id);
-    if (awaiting?.awaitingRate) {
-      const rate = Number(text.trim().replace(',', '.'));
-      if (!Number.isFinite(rate) || rate <= 0) {
-        await ctx.reply('Введите курс числом, например: <code>90.5</code>', {
-          parse_mode: 'HTML',
-        });
-        return;
-      }
-      await this.createAndConfirm(ctx, ctx.from!.id, awaiting, rate);
-      return;
-    }
-
-    const parsed = parseExpenseInput(text);
-    if (!parsed) {
-      await ctx.reply(
-        'Не понял сумму. Пришлите, например: <code>кофе 200</code>\nИли /help для справки.',
-        { parse_mode: 'HTML' },
-      );
-      return;
-    }
-
-    const userId = ctx.from!.id;
-    const pending: PendingExpense = { ...parsed };
-
-    // BR-7 — пробуем предложить категорию по выученной метке.
-    if (parsed.label) {
-      const suggestions = await this.transactions.suggestLabels(parsed.label);
-      const top = suggestions[0];
-      if (top) {
-        const category = await this.categories.findOne(top.categoryId);
-        pending.suggestion = { categoryId: top.categoryId, subcategoryId: top.subcategoryId };
-        this.pending.set(userId, pending);
-        const kb = new InlineKeyboard()
-          .text(`✅ ${category.name} · ${formatAmount(parsed.amount)}`, 'g')
-          .row()
-          .text('Выбрать другую категорию', 'pick')
-          .row()
-          .text('Отмена', 'x');
-        await ctx.reply(
-          `Записать <b>${formatAmount(parsed.amount)}</b>` +
-            (parsed.label ? ` «${escapeHtml(parsed.label)}»` : '') +
-            ` в категорию <b>${escapeHtml(category.name)}</b>?`,
-          { parse_mode: 'HTML', reply_markup: kb },
-        );
-        return;
-      }
-    }
-
-    this.pending.set(userId, pending);
-    await this.askRootCategory(ctx, parsed.amount, parsed.label);
-  }
-
-  private async askRootCategory(ctx: Context, amount: number, label: string | null) {
-    const roots = await this.expenseRoots();
-    if (!roots.length) {
-      await ctx.reply('Нет категорий расходов. Создайте их в приложении.');
-      return;
-    }
-    const kb = new InlineKeyboard();
-    roots.forEach((r, i) => {
-      kb.text(r.name, `c:${r.id}`);
-      if (i % 2 === 1) kb.row();
-    });
-    kb.row().text('Отмена', 'x');
-    await ctx.reply(
-      `Выберите категорию для <b>${formatAmount(amount)}</b>` +
-        (label ? ` «${escapeHtml(label)}»` : ''),
-      { parse_mode: 'HTML', reply_markup: kb },
-    );
-  }
-
-  private async handleCallback(ctx: Context) {
+  private async routeCallback(ctx: Context) {
     const data = ctx.callbackQuery?.data ?? '';
     const userId = ctx.from!.id;
-    const pending = this.pending.get(userId);
 
-    if (data === 'x') {
-      this.pending.delete(userId);
+    if (data === CB.cancel) {
+      this.sessions.clear(userId);
       await ctx.answerCallbackQuery();
       await ctx.editMessageText('Отменено.');
       return;
     }
+    if (data === CB.noop) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
 
-    if (!pending) {
+    const session = this.sessions.get(userId);
+    if (!session) {
       await ctx.answerCallbackQuery({ text: 'Сессия истекла, отправьте трату заново.' });
       return;
     }
 
-    // Подтверждение предложенной категории.
-    if (data === 'g' && pending.suggestion) {
-      await ctx.answerCallbackQuery();
-      await this.afterCategoryChosen(
-        ctx,
-        userId,
-        pending,
-        pending.suggestion.categoryId,
-        pending.suggestion.subcategoryId,
-      );
-      return;
-    }
-
-    // Пользователь отказался от предложения — показать полный список.
-    if (data === 'pick') {
-      await ctx.answerCallbackQuery();
-      await this.askRootCategory(ctx, pending.amount, pending.label);
-      return;
-    }
-
-    // Выбор корневой категории.
-    if (data.startsWith('c:')) {
-      const rootId = data.slice(2);
-      const roots = await this.expenseRoots();
-      const root = roots.find((r) => r.id === rootId);
-      const children = (root?.children ?? []).filter((c) => c.active);
-      await ctx.answerCallbackQuery();
-
-      if (!children.length) {
-        await this.afterCategoryChosen(ctx, userId, pending, rootId, null);
-        return;
-      }
-      pending.rootId = rootId;
-      this.pending.set(userId, pending);
-      const kb = new InlineKeyboard();
-      children.forEach((c, i) => {
-        kb.text(c.name, `s:${c.id}`);
-        if (i % 2 === 1) kb.row();
-      });
-      kb.row().text('Без подкатегории', 's:-').row().text('Отмена', 'x');
-      await ctx.editMessageText('Выберите подкатегорию:', { reply_markup: kb });
-      return;
-    }
-
-    // Выбор подкатегории.
-    if (data.startsWith('s:')) {
-      const sub = data.slice(2);
-      await ctx.answerCallbackQuery();
-      await this.afterCategoryChosen(
-        ctx,
-        userId,
-        pending,
-        pending.rootId!,
-        sub === '-' ? null : sub,
-      );
-      return;
-    }
-
-    // Выбор счёта.
-    if (data.startsWith('a:')) {
-      const accountId = data.slice(2);
-      await ctx.answerCallbackQuery();
-      const account = await this.accounts.findOne(accountId);
-      pending.accountId = account.id;
-
-      if (account.currency !== 'RUB') {
-        // Валютный счёт — спрашиваем курс следующим сообщением
-        pending.awaitingRate = true;
-        this.pending.set(userId, pending);
-        await ctx.editMessageText(
-          `Счёт «${escapeHtml(account.name)}» в ${account.currency}.\n` +
-            `Курс: сколько рублей за 1 ${account.currency}? Например: <code>90.5</code>`,
-          { parse_mode: 'HTML' },
-        );
-        return;
-      }
-      await this.createAndConfirm(ctx, userId, pending);
-      return;
-    }
-
-    await ctx.answerCallbackQuery();
-  }
-
-  // Категория выбрана: при нескольких счетах — шаг выбора счёта, иначе сразу запись
-  private async afterCategoryChosen(
-    ctx: Context,
-    userId: number,
-    pending: PendingExpense,
-    rootId: string,
-    subId: string | null,
-  ) {
-    pending.rootId = rootId;
-    pending.subId = subId;
-    this.pending.set(userId, pending);
-
-    const active = (await this.accounts.list()).filter((a) => a.active);
-    if (active.length <= 1) {
-      await this.createAndConfirm(ctx, userId, pending);
-      return;
-    }
-
-    const kb = new InlineKeyboard();
-    // Основной первым — запись в один тап
-    const ordered = [...active].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
-    ordered.forEach((a, i) => {
-      const label = `${a.isDefault ? '✅ ' : ''}${a.name} (${a.currency})`;
-      kb.text(label, `a:${a.id}`);
-      if (i % 2 === 1) kb.row();
-    });
-    kb.row().text('Отмена', 'x');
-    await ctx.editMessageText('С какого счёта?', { reply_markup: kb });
-  }
-
-  private async createAndConfirm(
-    ctx: Context,
-    userId: number,
-    data: PendingExpense,
-    rate?: number,
-  ) {
-    this.pending.delete(userId);
-    const tx = await this.transactions.create({
-      amount: data.amount,
-      categoryId: data.rootId!,
-      subcategoryId: data.subId ?? null,
-      label: data.label,
-      note: data.note,
-      accountId: data.accountId,
-      rate: rate ?? null,
-    });
-
-    const alert = await this.budgetAlert(data.rootId!);
-    const text = formatConfirmation(tx, alert);
-    // После ввода курса текстом редактировать нечего — отвечаем новым сообщением
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(text, { parse_mode: 'HTML' });
-    } else {
-      await ctx.reply(text, { parse_mode: 'HTML' });
+    switch (session.mode) {
+      case 'expense':
+        return this.entry.handleCallback(ctx, data, session);
     }
   }
 
-  // Предупреждение, если категория близка к лимиту или превысила его.
-  private async budgetAlert(categoryId: string): Promise<string | undefined> {
-    const status = await this.analytics.budgetStatus({ month: this.month() });
-    const item = status.items.find((i) => i.categoryId === categoryId);
-    if (!item || item.monthlyLimit <= 0) return undefined;
-    const pct = Math.round((100 * item.fact) / item.monthlyLimit);
-    if (item.overspent) {
-      return `🔴 Бюджет «${escapeHtml(item.categoryName)}» превышен: ${formatAmount(
-        item.fact,
-      )} из ${formatAmount(item.monthlyLimit)} (${pct}%).`;
-    }
-    if (pct >= 80) {
-      return `🟡 По «${escapeHtml(item.categoryName)}» израсходовано ${pct}%: ${formatAmount(
-        item.fact,
-      )} из ${formatAmount(item.monthlyLimit)}.`;
-    }
-    return undefined;
+  private async routeText(ctx: Context) {
+    return this.entry.handleText(ctx);
   }
 
-  // ——— Статистика ———
+  // ——— Статистика (уезжает в stats.handler в следующей итерации) ———
 
   private async handleStats(ctx: Context, period: 'day' | 'month', title: string) {
     const data = await this.analytics.byCategory({
@@ -415,13 +176,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private async handleBudget(ctx: Context) {
     const budget = await this.analytics.budgetStatus({ month: this.month() });
     await ctx.reply(formatBudget(budget), { parse_mode: 'HTML' });
-  }
-
-  // ——— Вспомогательное ———
-
-  private async expenseRoots(): Promise<CategoryNode[]> {
-    const tree = await this.categories.tree();
-    return tree.filter((c) => c.type === 'expense' && c.active);
   }
 
   private today(): string {
