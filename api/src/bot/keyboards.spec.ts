@@ -1,5 +1,5 @@
 import { type InlineKeyboard } from 'grammy';
-import { kbAccounts, kbCategoryRoots, kbSubcategories, kbSuggestion } from './keyboards';
+import { kbAccounts, kbCategoryRoots, kbStats, kbSubcategories, kbSuggestion } from './keyboards';
 
 const UUID_A = 'db086d6c-ab5f-4009-941b-767d3b8496a0';
 const UUID_B = '405e7a94-de68-4571-a37c-cddc0d188dc5';
@@ -49,6 +49,31 @@ describe('kbSubcategories', () => {
     expect(all).toContain('s:-');
     expect(all).toContain('x');
     expect(all).toContain(`s:${UUID_A}`);
+  });
+});
+
+describe('kbStats', () => {
+  it('пресеты без флага доходов, тумблер — переданный callback', () => {
+    const kb = kbStats(false, 'p:s:m:i');
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain('p:s:d');
+    expect(all).toContain('p:s:pm');
+    expect(all).toContain('p:s:m:i'); // тумблер
+    expect(all).toContain('dn:6');
+    expect(all).toContain('dn:12');
+  });
+
+  it('в режиме доходов пресеты несут флаг :i', () => {
+    const kb = kbStats(true, 'p:s:m');
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain('p:s:d:i');
+    expect(all).toContain('p:s:yr:i');
+  });
+
+  it('диапазонный тумблер укладывается в 64 байта', () => {
+    const kb = kbStats(false, 'p:s:r:20260601:20260630:i');
+    assertValidCallbacks(kb);
   });
 });
 

@@ -12,6 +12,8 @@ export const CB = {
   subcategory: 's', // s:<uuid> | s:- (без подкатегории)
   account: 'a', // a:<uuid> — счёт
   noop: '-', // кнопка-индикатор, ничего не делает («стр. 2/5»)
+  period: 'p', // p:s:<preset>[:i] | p:s:r:<YYYYMMDD>:<YYYYMMDD>[:i] — периоды статистики (stateless)
+  dynamics: 'dn', // dn:<6|12> — динамика за N месяцев (stateless)
 } as const;
 
 const MAX_CALLBACK_BYTES = 64;

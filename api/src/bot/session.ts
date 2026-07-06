@@ -36,7 +36,13 @@ export interface TransferDraft {
   toAmount?: number;
 }
 
-export type Session = EntryDraft | TransferDraft;
+// /stats → «Свой диапазон»: ждём текст с двумя датами; income — был ли включён режим доходов.
+export interface AwaitRangeState {
+  mode: 'await_range';
+  income: boolean;
+}
+
+export type Session = EntryDraft | TransferDraft | AwaitRangeState;
 
 const TTL_MS = 30 * 60 * 1000;
 
