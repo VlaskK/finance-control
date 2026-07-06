@@ -6,9 +6,11 @@ import { AccountsModule } from '../accounts/accounts.module';
 import { BotService } from './bot.service';
 import { SessionStore } from './session';
 import { EntryHandler } from './handlers/entry.handler';
+import { TransferHandler } from './handlers/transfer.handler';
+import { InfoHandler } from './handlers/info.handler';
 
 @Module({
   imports: [TransactionsModule, CategoriesModule, AnalyticsModule, AccountsModule],
-  providers: [BotService, SessionStore, EntryHandler],
+  providers: [BotService, SessionStore, EntryHandler, TransferHandler, InfoHandler],
 })
 export class BotModule {}

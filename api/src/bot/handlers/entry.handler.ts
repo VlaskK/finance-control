@@ -1,6 +1,6 @@
-// Диалог ввода траты: парс текста → (подсказка категории по метке | выбор категории)
-// → подкатегория → счёт (если их несколько) → курс (если счёт валютный) → запись.
-// Поведение 1-в-1 перенесено из bot.service.ts при разбиении модуля.
+// Диалог ввода траты или дохода: парс текста → (подсказка категории по метке | выбор
+// категории) → подкатегория → счёт (если их несколько) → курс (если счёт валютный) → запись.
+// Доход — тот же флоу с категориями типа income и без бюджетного алерта.
 
 import { Injectable } from '@nestjs/common';
 import { type Context } from 'grammy';
@@ -8,7 +8,7 @@ import { TransactionsService } from '../../transactions/transactions.service';
 import { CategoriesService, type CategoryNode } from '../../categories/categories.service';
 import { AnalyticsService } from '../../analytics/analytics.service';
 import { AccountsService } from '../../accounts/accounts.service';
-import { parseExpenseInput } from '../parse';
+import { parseExpenseInput, parseIncomeInput, parsePositiveNumber } from '../parse';
 import { escapeHtml, formatAmount, formatConfirmation } from '../format';
 import { SessionStore, type EntryDraft } from '../session';
 import { CB, parseCb } from '../callbacks';
@@ -24,15 +24,19 @@ export class EntryHandler {
     private readonly sessions: SessionStore,
   ) {}
 
-  // Текстовый ввод: либо курс для валютного счёта, либо новая трата.
+  // Текстовый ввод: курс для валютного счёта, доход («+50000 зарплата») или трата.
   async handleText(ctx: Context): Promise<void> {
     const text = ctx.message?.text ?? '';
     const userId = ctx.from!.id;
 
     const session = this.sessions.get(userId);
-    if (session?.mode === 'expense' && session.awaitingRate) {
-      const rate = Number(text.trim().replace(',', '.'));
-      if (!Number.isFinite(rate) || rate <= 0) {
+    if (
+      session &&
+      (session.mode === 'expense' || session.mode === 'income') &&
+      session.awaitingRate
+    ) {
+      const rate = parsePositiveNumber(text);
+      if (rate === null) {
         await ctx.reply('Введите курс числом, например: <code>90.5</code>', {
           parse_mode: 'HTML',
         });
@@ -42,43 +46,47 @@ export class EntryHandler {
       return;
     }
 
-    const parsed = parseExpenseInput(text);
+    const income = parseIncomeInput(text);
+    const parsed = income ?? parseExpenseInput(text);
     if (!parsed) {
       await ctx.reply(
-        'Не понял сумму. Пришлите, например: <code>кофе 200</code>\nИли /help для справки.',
+        'Не понял сумму. Трата: <code>кофе 200</code>, доход: <code>+50000 зарплата</code>\n' +
+          'Или /help для справки.',
         { parse_mode: 'HTML' },
       );
       return;
     }
 
-    const draft: EntryDraft = { mode: 'expense', ...parsed };
+    const draft: EntryDraft = { mode: income ? 'income' : 'expense', ...parsed };
 
-    // BR-7 — пробуем предложить категорию по выученной метке.
+    // BR-7 — пробуем предложить категорию по выученной метке (тип должен совпасть).
     if (parsed.label) {
       const suggestions = await this.transactions.suggestLabels(parsed.label);
       const top = suggestions[0];
       if (top) {
         const category = await this.categories.findOne(top.categoryId);
-        draft.suggestion = { categoryId: top.categoryId, subcategoryId: top.subcategoryId };
-        this.sessions.set(userId, draft);
-        await ctx.reply(
-          `Записать <b>${formatAmount(parsed.amount)}</b>` +
-            (parsed.label ? ` «${escapeHtml(parsed.label)}»` : '') +
-            ` в категорию <b>${escapeHtml(category.name)}</b>?`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: kbSuggestion(category.name, formatAmount(parsed.amount)),
-          },
-        );
-        return;
+        if (category.type === draft.mode) {
+          draft.suggestion = { categoryId: top.categoryId, subcategoryId: top.subcategoryId };
+          this.sessions.set(userId, draft);
+          await ctx.reply(
+            `Записать ${draft.mode === 'income' ? 'доход ' : ''}<b>${formatAmount(parsed.amount)}</b>` +
+              (parsed.label ? ` «${escapeHtml(parsed.label)}»` : '') +
+              ` в категорию <b>${escapeHtml(category.name)}</b>?`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: kbSuggestion(category.name, formatAmount(parsed.amount)),
+            },
+          );
+          return;
+        }
       }
     }
 
     this.sessions.set(userId, draft);
-    await this.askRootCategory(ctx, parsed.amount, parsed.label);
+    await this.askRootCategory(ctx, draft);
   }
 
-  // Callback'и диалога траты; сессия уже проверена роутером.
+  // Callback'и диалога; сессия уже проверена роутером.
   async handleCallback(ctx: Context, data: string, draft: EntryDraft): Promise<void> {
     const userId = ctx.from!.id;
     const { ns, args } = parseCb(data);
@@ -97,13 +105,13 @@ export class EntryHandler {
 
     if (ns === CB.pickFull) {
       await ctx.answerCallbackQuery();
-      await this.askRootCategory(ctx, draft.amount, draft.label);
+      await this.askRootCategory(ctx, draft);
       return;
     }
 
     if (ns === CB.category) {
       const rootId = args[0];
-      const roots = await this.expenseRoots();
+      const roots = await this.roots(draft.mode);
       const root = roots.find((r) => r.id === rootId);
       const children = (root?.children ?? []).filter((c) => c.active);
       await ctx.answerCallbackQuery();
@@ -151,15 +159,20 @@ export class EntryHandler {
     await ctx.answerCallbackQuery();
   }
 
-  private async askRootCategory(ctx: Context, amount: number, label: string | null) {
-    const roots = await this.expenseRoots();
+  private async askRootCategory(ctx: Context, draft: EntryDraft) {
+    const roots = await this.roots(draft.mode);
     if (!roots.length) {
-      await ctx.reply('Нет категорий расходов. Создайте их в приложении.');
+      await ctx.reply(
+        draft.mode === 'income'
+          ? 'Нет категорий доходов. Создайте их в приложении.'
+          : 'Нет категорий расходов. Создайте их в приложении.',
+      );
       return;
     }
+    const what = draft.mode === 'income' ? 'дохода ' : '';
     await ctx.reply(
-      `Выберите категорию для <b>${formatAmount(amount)}</b>` +
-        (label ? ` «${escapeHtml(label)}»` : ''),
+      `Выберите категорию ${what}для <b>${formatAmount(draft.amount)}</b>` +
+        (draft.label ? ` «${escapeHtml(draft.label)}»` : ''),
       { parse_mode: 'HTML', reply_markup: kbCategoryRoots(roots) },
     );
   }
@@ -182,7 +195,8 @@ export class EntryHandler {
       return;
     }
 
-    await ctx.editMessageText('С какого счёта?', { reply_markup: kbAccounts(active) });
+    const question = draft.mode === 'income' ? 'На какой счёт?' : 'С какого счёта?';
+    await ctx.editMessageText(question, { reply_markup: kbAccounts(active) });
   }
 
   private async createAndConfirm(ctx: Context, userId: number, draft: EntryDraft, rate?: number) {
@@ -197,7 +211,8 @@ export class EntryHandler {
       rate: rate ?? null,
     });
 
-    const alert = await this.budgetAlert(draft.rootId!);
+    // Бюджеты считаются только по расходам.
+    const alert = draft.mode === 'expense' ? await this.budgetAlert(draft.rootId!) : undefined;
     const text = formatConfirmation(tx, alert);
     // После ввода курса текстом редактировать нечего — отвечаем новым сообщением
     if (ctx.callbackQuery) {
@@ -227,8 +242,8 @@ export class EntryHandler {
     return undefined;
   }
 
-  private async expenseRoots(): Promise<CategoryNode[]> {
+  private async roots(type: 'expense' | 'income'): Promise<CategoryNode[]> {
     const tree = await this.categories.tree();
-    return tree.filter((c) => c.type === 'expense' && c.active);
+    return tree.filter((c) => c.type === type && c.active);
   }
 }
