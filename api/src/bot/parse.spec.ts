@@ -1,4 +1,61 @@
-import { parseExpenseInput, parseIncomeInput, parsePositiveNumber } from './parse';
+import {
+  parseDate,
+  parseDateRange,
+  parseExpenseInput,
+  parseIncomeInput,
+  parsePositiveNumber,
+} from './parse';
+
+const TODAY = '2026-07-05';
+
+describe('parseDate', () => {
+  it('ISO как есть', () => {
+    expect(parseDate('2026-06-01', TODAY)).toBe('2026-06-01');
+  });
+
+  it('ДД.ММ.ГГГГ', () => {
+    expect(parseDate('01.06.2025', TODAY)).toBe('2025-06-01');
+  });
+
+  it('ДД.ММ — год текущий', () => {
+    expect(parseDate('5.7', TODAY)).toBe('2026-07-05');
+  });
+
+  it('несуществующая дата → null (без переката месяца)', () => {
+    expect(parseDate('31.02', TODAY)).toBeNull();
+    expect(parseDate('2026-13-01', TODAY)).toBeNull();
+  });
+
+  it('мусор → null', () => {
+    expect(parseDate('вчера', TODAY)).toBeNull();
+  });
+});
+
+describe('parseDateRange', () => {
+  it('через пробел', () => {
+    expect(parseDateRange('01.06 30.06', TODAY)).toEqual({ from: '2026-06-01', to: '2026-06-30' });
+  });
+
+  it('через дефис', () => {
+    expect(parseDateRange('01.06-30.06', TODAY)).toEqual({ from: '2026-06-01', to: '2026-06-30' });
+  });
+
+  it('ISO-даты через пробел (дефисы внутри дат не ломают разбор)', () => {
+    expect(parseDateRange('2026-06-01 2026-06-30', TODAY)).toEqual({
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+  });
+
+  it('обратный порядок переставляется', () => {
+    expect(parseDateRange('30.06 01.06', TODAY)).toEqual({ from: '2026-06-01', to: '2026-06-30' });
+  });
+
+  it('одна дата или мусор → null', () => {
+    expect(parseDateRange('01.06', TODAY)).toBeNull();
+    expect(parseDateRange('привет мир', TODAY)).toBeNull();
+  });
+});
 
 describe('parseIncomeInput', () => {
   it('«+50000 зарплата» → доход', () => {

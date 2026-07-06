@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../database/database.module';
 import type {
   AnalyticsByCategoryDto,
+  AnalyticsRangeDto,
   BudgetStatusDto,
   DynamicsDto,
   InflationDto,
@@ -64,6 +65,19 @@ export class AnalyticsService {
   // CALC-1 (FR-D2) вЂ” С‚СЂР°С‚С‹ РїРѕ РєР°С‚РµРіРѕСЂРёСЏРј Р·Р° РїРµСЂРёРѕРґ
   async byCategory(dto: AnalyticsByCategoryDto) {
     const { from, to } = periodRange(dto.period, dto.date);
+    return this.byCategoryBetween(from, to, dto);
+  }
+
+  // То же за произвольный диапазон дат (Telegram-бот); контракт byCategory не меняется.
+  async byCategoryRange(dto: AnalyticsRangeDto) {
+    return this.byCategoryBetween(dto.from, dto.to, dto);
+  }
+
+  private async byCategoryBetween(
+    from: string,
+    to: string,
+    dto: { includeTransfers: boolean; includeIncome: boolean },
+  ) {
     const rows = (await this.db.execute(sql`
       select root.id as "categoryId", root.name as "name", root.color as "color",
              root.type::text as "type",

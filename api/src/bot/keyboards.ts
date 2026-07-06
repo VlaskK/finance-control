@@ -79,3 +79,25 @@ export function kbAccounts(
 export function kbConfirm(confirmLabel = '✅ Записать'): InlineKeyboard {
   return new InlineKeyboard().text(confirmLabel, CB.confirm).text(CANCEL_LABEL, CB.cancel);
 }
+
+// Пресеты периодов статистики. Все кнопки несут текущий флаг доходов (:i),
+// чтобы переключение периода не сбрасывало режим; toggleData — перерисовка
+// текущего представления с противоположным флагом.
+export function kbStats(income: boolean, toggleData: string): InlineKeyboard {
+  const preset = (p: string) => (income ? cb(CB.period, 's', p, 'i') : cb(CB.period, 's', p));
+  return new InlineKeyboard()
+    .text('Сегодня', preset('d'))
+    .text('Вчера', preset('y'))
+    .text('Неделя', preset('w'))
+    .row()
+    .text('Месяц', preset('m'))
+    .text('Прош. месяц', preset('pm'))
+    .text('Год', preset('yr'))
+    .row()
+    .text('📅 Свой диапазон', preset('c'))
+    .row()
+    .text(income ? '💰 Скрыть доходы' : '💰 Показать доходы', toggleData)
+    .row()
+    .text('📈 Динамика 6 мес', cb(CB.dynamics, 6))
+    .text('📈 12 мес', cb(CB.dynamics, 12));
+}

@@ -23,6 +23,56 @@ export function parsePositiveNumber(text: string): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+// Дата из «05.07», «05.07.2026» или «2026-07-05» → ISO; год по умолчанию — текущий.
+export function parseDate(text: string, todayIso = new Date().toISOString().slice(0, 10)): string | null {
+  const t = text.trim();
+
+  const isoMatch = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const dotMatch = t.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
+
+  let year: number;
+  let month: number;
+  let day: number;
+  if (isoMatch) {
+    [year, month, day] = [Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3])];
+  } else if (dotMatch) {
+    day = Number(dotMatch[1]);
+    month = Number(dotMatch[2]);
+    year = dotMatch[3] ? Number(dotMatch[3]) : Number(todayIso.slice(0, 4));
+  } else {
+    return null;
+  }
+
+  // Валидность календарной даты: Date не должен «перекатить» месяц (31.02 → 03.03).
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+// Диапазон «01.06 30.06» / «01.06-30.06» / «2026-06-01 2026-06-30» → {from, to} ISO.
+// Даты в любом порядке — переставим.
+export function parseDateRange(
+  text: string,
+  todayIso = new Date().toISOString().slice(0, 10),
+): { from: string; to: string } | null {
+  const tokens = text
+    .trim()
+    .split(/\s*[–—]\s*|\s+-\s+|\s+|(?<=\d)-(?=\d{1,2}\.)/)
+    .filter(Boolean);
+  if (tokens.length !== 2) return null;
+
+  const a = parseDate(tokens[0], todayIso);
+  const b = parseDate(tokens[1], todayIso);
+  if (!a || !b) return null;
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
+}
+
 export function parseExpenseInput(text: string): ParsedExpense | null {
   const trimmed = text.trim();
   if (!trimmed) return null;

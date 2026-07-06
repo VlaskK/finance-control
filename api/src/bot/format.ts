@@ -72,6 +72,120 @@ export function formatBudget(data: BudgetResult): string {
   return [`<b>Бюджеты · ${escapeHtml(data.month)}</b>`, '', ...lines].join('\n');
 }
 
+// Мини-бар из символов для моноширинных строк отчёта.
+export function bar(value: number, max: number, width = 8): string {
+  if (max <= 0 || value <= 0) return '░'.repeat(width);
+  const filled = Math.min(width, Math.max(1, Math.round((value / max) * width)));
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
+}
+
+// Имя фиксированной ширины для колонки (обрезка с многоточием).
+function fitName(name: string, width = 10): string {
+  const cut = name.length > width ? `${name.slice(0, width - 1)}…` : name;
+  return cut.padEnd(width, ' ');
+}
+
+interface StatsData {
+  from: string;
+  to: string;
+  total: number;
+  items: Array<{ name: string; type: string; amount: number; count: number; share: number | null }>;
+}
+
+// Отчёт «Расходы (и доходы) за период» с барами; строки моноширинные.
+export function formatStats(title: string, data: StatsData, opts: { income: boolean }): string {
+  const expenses = data.items.filter((i) => i.type === 'expense');
+  const maxExpense = Math.max(...expenses.map((i) => i.amount), 0);
+
+  const lines: string[] = [`📊 <b>Расходы · ${escapeHtml(title)}</b>`];
+  if (!expenses.length) {
+    lines.push('За этот период трат нет.');
+  } else {
+    lines.push(`Всего: <b>${formatAmount(data.total)}</b>`, '');
+    for (const i of expenses) {
+      const share = i.share !== null ? ` · ${Math.round(i.share)}%` : '';
+      lines.push(
+        `<code>${escapeHtml(fitName(i.name))} ${bar(i.amount, maxExpense)} ${formatAmount(
+          i.amount,
+        )}${share}</code>`,
+      );
+    }
+  }
+
+  if (opts.income) {
+    const incomes = data.items.filter((i) => i.type === 'income');
+    const totalIncome = incomes.reduce((acc, i) => acc + i.amount, 0);
+    const maxIncome = Math.max(...incomes.map((i) => i.amount), 0);
+    lines.push('', `💰 <b>Доходы</b>: <b>${formatAmount(totalIncome)}</b>`);
+    if (!incomes.length) {
+      lines.push('За этот период доходов нет.');
+    } else {
+      for (const i of incomes) {
+        lines.push(
+          `<code>${escapeHtml(fitName(i.name))} ${bar(i.amount, maxIncome)} ${formatAmount(
+            i.amount,
+          )}</code>`,
+        );
+      }
+      lines.push('', `Баланс: <b>${formatAmount(totalIncome - data.total)}</b>`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+interface DynamicsData {
+  periods: string[];
+  categories: Array<{
+    name: string;
+    points: Array<{ period: string; spend: number }>;
+  }>;
+}
+
+// Динамика: итог расходов по месяцам с барами + заметные изменения последнего месяца.
+export function formatDynamics(data: DynamicsData): string {
+  const totals = data.periods.map((period) =>
+    data.categories.reduce(
+      (acc, c) => acc + (c.points.find((p) => p.period === period)?.spend ?? 0),
+      0,
+    ),
+  );
+  const max = Math.max(...totals, 0);
+
+  const lines = [`📈 <b>Динамика расходов · ${data.periods.length} мес</b>`, ''];
+  data.periods.forEach((period, i) => {
+    lines.push(`<code>${period} ${bar(totals[i], max)} ${formatAmount(totals[i])}</code>`);
+  });
+
+  // Топ изменений последнего месяца к предыдущему.
+  if (data.periods.length >= 2) {
+    const last = data.periods.at(-1)!;
+    const prev = data.periods.at(-2)!;
+    const changes = data.categories
+      .map((c) => {
+        const lastSpend = c.points.find((p) => p.period === last)?.spend ?? 0;
+        const prevSpend = c.points.find((p) => p.period === prev)?.spend ?? 0;
+        if (prevSpend <= 0) return null;
+        const pct = Math.round(((lastSpend - prevSpend) / prevSpend) * 100);
+        return { name: c.name, pct };
+      })
+      .filter((c): c is { name: string; pct: number } => c !== null && c.pct !== 0)
+      .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+      .slice(0, 3);
+
+    if (changes.length) {
+      lines.push(
+        '',
+        `К прошлому месяцу: ${changes
+          .map((c) => `${escapeHtml(c.name)} ${c.pct > 0 ? '+' : ''}${c.pct}%`)
+          .join(' · ')}`,
+      );
+    }
+  }
+
+  return lines.join('\n');
+}
+
 interface CreatedTx {
   type?: string;
   amount: string;

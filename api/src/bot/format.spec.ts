@@ -1,10 +1,13 @@
 import {
+  bar,
   escapeHtml,
   formatAccounts,
   formatAmount,
   formatBreakdown,
   formatBudget,
   formatConfirmation,
+  formatDynamics,
+  formatStats,
 } from './format';
 
 // Intl для ru-RU использует неразрывные пробелы — нормализуем для сравнения.
@@ -139,6 +142,92 @@ describe('formatConfirmation', () => {
       toCurrency: null,
     });
     expect(text).toContain('→ вне счетов');
+  });
+});
+
+describe('bar', () => {
+  it('пропорционально максимуму, ширина фиксированная', () => {
+    expect(bar(50, 100, 8)).toBe('████░░░░');
+    expect(bar(100, 100, 8)).toBe('████████');
+  });
+
+  it('ноль и нулевой максимум — пустой бар', () => {
+    expect(bar(0, 100, 8)).toBe('░░░░░░░░');
+    expect(bar(5, 0, 8)).toBe('░░░░░░░░');
+  });
+
+  it('маленькое, но ненулевое значение — минимум одна клетка', () => {
+    expect(bar(1, 1000, 8)).toBe('█░░░░░░░');
+  });
+});
+
+describe('formatStats', () => {
+  const data = {
+    from: '2026-06-01',
+    to: '2026-06-30',
+    total: 300,
+    items: [
+      { name: 'Еда', type: 'expense', amount: 200, count: 2, share: 66.7 },
+      { name: 'Такси', type: 'expense', amount: 100, count: 1, share: 33.3 },
+      { name: 'Зарплата', type: 'income', amount: 50000, count: 1, share: null },
+    ],
+  };
+
+  it('расходы с барами, доходы скрыты без флага', () => {
+    const text = formatStats('июнь', data, { income: false });
+    expect(text).toContain('Расходы · июнь');
+    expect(text).toContain('█');
+    expect(text).toContain('67%');
+    expect(text).not.toContain('Зарплата');
+  });
+
+  it('с флагом — секция доходов и баланс', () => {
+    const text = plain(formatStats('июнь', data, { income: true }));
+    expect(text).toContain('Доходы');
+    expect(text).toContain('Зарплата');
+    expect(text).toContain('Баланс');
+    expect(text).toContain('49 700'); // 50 000 − 300
+  });
+
+  it('пустой период', () => {
+    expect(formatStats('июнь', { ...data, total: 0, items: [] }, { income: false })).toContain(
+      'трат нет',
+    );
+  });
+});
+
+describe('formatDynamics', () => {
+  const data = {
+    periods: ['2026-05', '2026-06'],
+    categories: [
+      {
+        name: 'Еда',
+        points: [
+          { period: '2026-05', spend: 100 },
+          { period: '2026-06', spend: 150 },
+        ],
+      },
+      {
+        name: 'Такси',
+        points: [
+          { period: '2026-05', spend: 50 },
+          { period: '2026-06', spend: 25 },
+        ],
+      },
+    ],
+  };
+
+  it('итоги по месяцам с барами', () => {
+    const text = plain(formatDynamics(data));
+    expect(text).toContain('2026-05');
+    expect(text).toContain('150 ₽'); // 100+50
+    expect(text).toContain('175 ₽'); // 150+25
+  });
+
+  it('топ изменений к прошлому месяцу', () => {
+    const text = formatDynamics(data);
+    expect(text).toContain('Еда +50%');
+    expect(text).toContain('Такси -50%');
   });
 });
 

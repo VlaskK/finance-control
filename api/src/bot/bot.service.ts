@@ -10,12 +10,13 @@ import {
 } from '@nestjs/common';
 import { Bot, type Context } from 'grammy';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { formatBreakdown, formatBudget } from './format';
+import { formatBudget } from './format';
 import { SessionStore } from './session';
-import { CB } from './callbacks';
+import { CB, parseCb } from './callbacks';
 import { EntryHandler } from './handlers/entry.handler';
 import { TransferHandler } from './handlers/transfer.handler';
 import { InfoHandler } from './handlers/info.handler';
+import { StatsHandler } from './handlers/stats.handler';
 
 const HELP = [
   '💸 <b>FinFlow-бот</b>',
@@ -48,6 +49,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly entry: EntryHandler,
     private readonly transfer: TransferHandler,
     private readonly info: InfoHandler,
+    private readonly stats: StatsHandler,
   ) {}
 
   async onModuleInit() {
@@ -86,9 +88,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     bot.command('whoami', (ctx) =>
       ctx.reply(`Ваш Telegram ID: <code>${ctx.from?.id}</code>`, { parse_mode: 'HTML' }),
     );
-    bot.command('today', (ctx) => this.handleStats(ctx, 'day', 'Траты за сегодня'));
-    bot.command('month', (ctx) => this.handleStats(ctx, 'month', 'Траты за месяц'));
-    bot.command('stats', (ctx) => this.handleStatsAndBudget(ctx));
+    bot.command('today', (ctx) => this.stats.command(ctx, 'd'));
+    bot.command('month', (ctx) => this.stats.command(ctx, 'm'));
+    bot.command('stats', (ctx) => this.stats.command(ctx, 'm'));
     bot.command('budget', (ctx) => this.handleBudget(ctx));
     bot.command('accounts', (ctx) => this.info.accountsList(ctx));
     bot.command('transfer', (ctx) => this.transfer.start(ctx));
@@ -151,6 +153,16 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Stateless-представления (статистика, динамика) — работают и без сессии,
+    // старые сообщения с такими кнопками живут вечно.
+    const { ns, args } = parseCb(data);
+    if (ns === CB.period && args[0] === 's') {
+      return this.stats.handleCallback(ctx, args.slice(1));
+    }
+    if (ns === CB.dynamics) {
+      return this.stats.handleDynamics(ctx, args[0]);
+    }
+
     const session = this.sessions.get(userId);
     if (!session) {
       await ctx.answerCallbackQuery({ text: 'Сессия истекла, отправьте трату заново.' });
@@ -163,6 +175,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return this.entry.handleCallback(ctx, data, session);
       case 'transfer':
         return this.transfer.handleCallback(ctx, data, session);
+      case 'await_range':
+        // Кнопок в этом режиме нет — ждём текст с датами.
+        return ctx.answerCallbackQuery();
     }
   }
 
@@ -172,45 +187,18 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (session?.mode === 'transfer') {
       return this.transfer.handleText(ctx, session);
     }
+    // «Свой диапазон» статистики ждёт две даты.
+    if (session?.mode === 'await_range') {
+      return this.stats.handleRangeText(ctx, session);
+    }
     return this.entry.handleText(ctx);
   }
 
-  // ——— Статистика (уезжает в stats.handler в следующей итерации) ———
-
-  private async handleStats(ctx: Context, period: 'day' | 'month', title: string) {
-    const data = await this.analytics.byCategory({
-      period,
-      date: this.today(),
-      includeTransfers: false,
-      includeIncome: false,
-    });
-    await ctx.reply(formatBreakdown(title, data), { parse_mode: 'HTML' });
-  }
-
-  private async handleStatsAndBudget(ctx: Context) {
-    const breakdown = await this.analytics.byCategory({
-      period: 'month',
-      date: this.today(),
-      includeTransfers: false,
-      includeIncome: false,
-    });
-    const budget = await this.analytics.budgetStatus({ month: this.month() });
-    await ctx.reply(
-      `${formatBreakdown('Траты за месяц', breakdown)}\n\n${formatBudget(budget)}`,
-      { parse_mode: 'HTML' },
-    );
-  }
+  // ——— Бюджеты (уезжает в budget.handler в следующей итерации) ———
 
   private async handleBudget(ctx: Context) {
-    const budget = await this.analytics.budgetStatus({ month: this.month() });
+    const month = new Date().toISOString().slice(0, 7);
+    const budget = await this.analytics.budgetStatus({ month });
     await ctx.reply(formatBudget(budget), { parse_mode: 'HTML' });
-  }
-
-  private today(): string {
-    return new Date().toISOString().slice(0, 10);
-  }
-
-  private month(): string {
-    return new Date().toISOString().slice(0, 7);
   }
 }
