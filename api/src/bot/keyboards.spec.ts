@@ -1,5 +1,15 @@
 import { type InlineKeyboard } from 'grammy';
-import { kbAccounts, kbCategoryRoots, kbStats, kbSubcategories, kbSuggestion } from './keyboards';
+import {
+  kbAccounts,
+  kbCategoryRoots,
+  kbConfirmDelete,
+  kbHistory,
+  kbHistoryFilters,
+  kbStats,
+  kbSubcategories,
+  kbSuggestion,
+  kbTxCard,
+} from './keyboards';
 
 const UUID_A = 'db086d6c-ab5f-4009-941b-767d3b8496a0';
 const UUID_B = '405e7a94-de68-4571-a37c-cddc0d188dc5';
@@ -74,6 +84,72 @@ describe('kbStats', () => {
   it('диапазонный тумблер укладывается в 64 байта', () => {
     const kb = kbStats(false, 'p:s:r:20260601:20260630:i');
     assertValidCallbacks(kb);
+  });
+});
+
+describe('kbHistory', () => {
+  const ids = [UUID_A, UUID_B, UUID_C];
+
+  it('номера страницы, навигация и фильтры; все callback ≤ 64 Б', () => {
+    const kb = kbHistory(ids, 1, 3);
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain(`h:o:${UUID_A}`);
+    expect(all).toContain('h:p:0'); // ‹
+    expect(all).toContain('h:p:2'); // ›
+    expect(all).toContain('-'); // индикатор страницы
+    expect(all).toContain('h:f');
+  });
+
+  it('на единственной странице нет навигации', () => {
+    const kb = kbHistory(ids, 0, 1);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).not.toContain('-');
+  });
+});
+
+describe('kbHistoryFilters', () => {
+  it('типы, категория/счёт, поиск, периоды, сброс', () => {
+    const kb = kbHistoryFilters();
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toEqual(
+      expect.arrayContaining(['h:ft:e', 'h:ft:-', 'h:fc', 'h:fa', 'h:fq', 'h:fd:m', 'h:fx', 'h:b']),
+    );
+  });
+});
+
+describe('kbTxCard / kbConfirmDelete', () => {
+  it('у обычной операции — все поля; callback с UUID укладываются в лимит', () => {
+    const kb = kbTxCard(UUID_A, 'expense');
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toEqual(
+      expect.arrayContaining([
+        `e:${UUID_A}:a`,
+        `e:${UUID_A}:c`,
+        `e:${UUID_A}:w`,
+        `e:${UUID_A}:x`,
+        'h:b',
+      ]),
+    );
+  });
+
+  it('у перевода нет смены категории/счёта/метки', () => {
+    const all = kbTxCard(UUID_A, 'transfer')
+      .inline_keyboard.flat()
+      .map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).not.toContain(`e:${UUID_A}:c`);
+    expect(all).not.toContain(`e:${UUID_A}:w`);
+    expect(all).toContain(`e:${UUID_A}:n`);
+  });
+
+  it('подтверждение удаления: да/нет', () => {
+    const kb = kbConfirmDelete(UUID_A);
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain(`e:${UUID_A}:xy`);
+    expect(all).toContain(`h:o:${UUID_A}`);
   });
 });
 

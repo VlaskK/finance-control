@@ -85,6 +85,13 @@ export const listTransactionsSchema = z.object({
   q: z.string().trim().max(120).optional(),
 });
 
+// Постраничный вариант списка (Telegram-бот): те же фильтры + limit/offset.
+// Аддитивно к listTransactionsSchema — GET /transactions по-прежнему отдаёт массив.
+export const listTransactionsPagedSchema = listTransactionsSchema.extend({
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 // FR-A4 / BR-7 — автодополнение меток
 export const labelQuerySchema = z.object({
   q: z.string().trim().min(1).max(120),
@@ -201,6 +208,7 @@ export type SetRateDto = z.infer<typeof setRateSchema>;
 export type CreateTransactionDto = z.infer<typeof createTransactionSchema>;
 export type UpdateTransactionDto = z.infer<typeof updateTransactionSchema>;
 export type ListTransactionsDto = z.infer<typeof listTransactionsSchema>;
+export type ListTransactionsPagedDto = z.infer<typeof listTransactionsPagedSchema>;
 export type CreateCategoryDto = z.infer<typeof createCategorySchema>;
 export type UpdateCategoryDto = z.infer<typeof updateCategorySchema>;
 export type MergeCategoryDto = z.infer<typeof mergeCategorySchema>;

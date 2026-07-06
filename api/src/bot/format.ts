@@ -1,6 +1,8 @@
 // Рендер текста для Telegram (parse_mode: HTML). Категории/метки приходят от пользователя,
 // поэтому весь подставляемый текст экранируется.
 
+import { type HistoryFilters } from './session';
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -229,6 +231,112 @@ export function formatConfirmation(tx: CreatedTx, budgetAlert?: string): string 
 
   if (budgetAlert) msg += `\n\n${budgetAlert}`;
   return msg;
+}
+
+// Строка операции в списке /history и полная карточка.
+export interface TxRow {
+  id: string;
+  type: string;
+  amount: string;
+  currency: string;
+  baseAmount: string;
+  occurredAt: string;
+  accountName: string;
+  toAccountName?: string | null;
+  toAmount?: string | null;
+  toCurrency?: string | null;
+  categoryName: string;
+  subcategoryName: string | null;
+  label: string | null;
+  note?: string | null;
+  rate?: string | null;
+}
+
+const TYPE_SIGN: Record<string, string> = { expense: '−', income: '+', transfer: '→' };
+
+// «1. 05.07 −350 ₽ Еда · кофе» — компактная строка списка.
+export function formatTxLine(tx: TxRow, index: number): string {
+  const day = tx.occurredAt.slice(8, 10);
+  const month = tx.occurredAt.slice(5, 7);
+  const sign = TYPE_SIGN[tx.type] ?? '';
+  const what =
+    tx.type === 'transfer'
+      ? `${escapeHtml(tx.accountName)} → ${tx.toAccountName ? escapeHtml(tx.toAccountName) : 'вне счетов'}`
+      : escapeHtml(tx.categoryName) + (tx.label ? ` · ${escapeHtml(tx.label)}` : '');
+  return `${index}. ${day}.${month}  ${sign}${formatAmount(Number(tx.amount), tx.currency)}  ${what}`;
+}
+
+// Полная карточка операции для просмотра/редактирования.
+export function formatTxCard(tx: TxRow): string {
+  const kind =
+    tx.type === 'income' ? '💰 Доход' : tx.type === 'transfer' ? '🔁 Перевод' : '💸 Трата';
+  const fx = tx.currency !== 'RUB' ? ` ≈ ${formatAmount(Number(tx.baseAmount))}` : '';
+  const cat = tx.subcategoryName
+    ? `${escapeHtml(tx.categoryName)} / ${escapeHtml(tx.subcategoryName)}`
+    : escapeHtml(tx.categoryName);
+
+  const lines = [
+    `${kind}: <b>${formatAmount(Number(tx.amount), tx.currency)}</b>${fx}`,
+    `Дата: ${tx.occurredAt}`,
+    `Категория: ${cat}`,
+  ];
+  if (tx.type === 'transfer') {
+    const target = tx.toAccountName
+      ? escapeHtml(tx.toAccountName) +
+        (tx.toAmount ? ` (${formatAmount(Number(tx.toAmount), tx.toCurrency ?? 'RUB')})` : '')
+      : 'вне счетов';
+    lines.push(`Маршрут: ${escapeHtml(tx.accountName)} → ${target}`);
+  } else {
+    lines.push(`Счёт: ${escapeHtml(tx.accountName)}`);
+  }
+  if (tx.rate) lines.push(`Курс: ${tx.rate}`);
+  if (tx.label) lines.push(`Метка: ${escapeHtml(tx.label)}`);
+  if (tx.note) lines.push(`Заметка: ${escapeHtml(tx.note)}`);
+  return lines.join('\n');
+}
+
+// Шапка списка операций: период, активные фильтры, счётчик страницы.
+export function formatHistoryHeader(
+  filters: HistoryFilters,
+  total: number,
+  page: number,
+  pages: number,
+): string {
+  const parts: string[] = [];
+  if (filters.from || filters.to) parts.push(`${filters.from ?? '…'} — ${filters.to ?? '…'}`);
+  else parts.push('за всё время');
+  if (filters.type) {
+    parts.push(
+      filters.type === 'expense' ? 'траты' : filters.type === 'income' ? 'доходы' : 'переводы',
+    );
+  }
+  if (filters.categoryName) parts.push(escapeHtml(filters.categoryName));
+  if (filters.accountName) parts.push(`счёт ${escapeHtml(filters.accountName)}`);
+  if (filters.q) parts.push(`поиск «${escapeHtml(filters.q)}»`);
+
+  const pageInfo = total > 0 ? ` · стр. ${page + 1}/${pages} · всего ${total}` : '';
+  return `📋 <b>Операции</b> (${parts.join(', ')})${pageInfo}`;
+}
+
+interface TagReportData {
+  tag: { name: string };
+  total: number;
+  byCategory: Array<{ categoryName: string; type: string; amount: string; count: number }>;
+}
+
+export function formatTagReport(data: TagReportData): string {
+  const lines = [`🏷 <b>${escapeHtml(data.tag.name)}</b> — ${formatAmount(data.total)}`];
+  if (!data.byCategory.length) {
+    lines.push('', 'Операций с этим тегом нет.');
+    return lines.join('\n');
+  }
+  lines.push('');
+  for (const row of data.byCategory) {
+    lines.push(
+      `• ${escapeHtml(row.categoryName)} — <b>${formatAmount(Number(row.amount))}</b> (${row.count} шт.)`,
+    );
+  }
+  return lines.join('\n');
 }
 
 interface AccountRow {

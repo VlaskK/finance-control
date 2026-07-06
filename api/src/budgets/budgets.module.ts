@@ -5,5 +5,6 @@ import { BudgetsService } from './budgets.service';
 @Module({
   controllers: [BudgetsController],
   providers: [BudgetsService],
+  exports: [BudgetsService], // нужен Telegram-боту
 })
 export class BudgetsModule {}

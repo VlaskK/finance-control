@@ -42,7 +42,52 @@ export interface AwaitRangeState {
   income: boolean;
 }
 
-export type Session = EntryDraft | TransferDraft | AwaitRangeState;
+// Фильтры списка операций (/history); подмножество ListTransactionsDto.
+export interface HistoryFilters {
+  type?: 'expense' | 'income' | 'transfer';
+  categoryId?: string;
+  categoryName?: string;
+  accountId?: string;
+  accountName?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+}
+
+// Список операций: фильтры и страница живут здесь (в callback — только номер страницы).
+// picking — какой фильтр выбирается пикером категорий/счетов; awaiting — ждём текст.
+export interface HistoryState {
+  mode: 'history';
+  filters: HistoryFilters;
+  page: number;
+  picking?: 'category' | 'account';
+  awaiting?: 'query' | 'range';
+}
+
+// Карточка операции / редактирование поля. returnTo — вернуться в тот же список.
+export interface EditState {
+  mode: 'edit';
+  txId: string;
+  field?: 'amount' | 'date' | 'label' | 'note' | 'rate';
+  rootId?: string; // выбранная корневая категория при смене категории
+  accountId?: string; // выбранный валютный счёт, ждём курс
+  returnTo?: { filters: HistoryFilters; page: number };
+}
+
+// /budget → «Задать лимит»: после выбора категории ждём сумму текстом.
+export interface BudgetSetState {
+  mode: 'budget_set';
+  categoryId?: string;
+  categoryName?: string;
+}
+
+export type Session =
+  | EntryDraft
+  | TransferDraft
+  | AwaitRangeState
+  | HistoryState
+  | EditState
+  | BudgetSetState;
 
 const TTL_MS = 30 * 60 * 1000;
 

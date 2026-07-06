@@ -5,5 +5,6 @@ import { TagsService } from './tags.service';
 @Module({
   controllers: [TagsController],
   providers: [TagsService],
+  exports: [TagsService], // нужен Telegram-боту
 })
 export class TagsModule {}
