@@ -8,6 +8,8 @@ import {
   formatConfirmation,
   formatDynamics,
   formatStats,
+  formatTxCard,
+  formatTxLine,
 } from './format';
 
 // Intl для ru-RU использует неразрывные пробелы — нормализуем для сравнения.
@@ -228,6 +230,44 @@ describe('formatDynamics', () => {
     const text = formatDynamics(data);
     expect(text).toContain('Еда +50%');
     expect(text).toContain('Такси -50%');
+  });
+});
+
+describe('formatTxLine / formatTxCard', () => {
+  const tx = {
+    id: 'id1',
+    type: 'expense',
+    amount: '350',
+    currency: 'RUB',
+    baseAmount: '350',
+    occurredAt: '2026-07-05',
+    accountName: 'Общий',
+    categoryName: 'Еда',
+    subcategoryName: null,
+    label: 'кофе',
+  };
+
+  it('строка списка: дата, знак, сумма, категория, метка', () => {
+    const line = plain(formatTxLine(tx, 1));
+    expect(line).toContain('1. 05.07');
+    expect(line).toContain('−350 ₽');
+    expect(line).toContain('Еда · кофе');
+  });
+
+  it('доход и перевод обозначаются знаком', () => {
+    expect(plain(formatTxLine({ ...tx, type: 'income' }, 2))).toContain('+350 ₽');
+    const transfer = plain(
+      formatTxLine({ ...tx, type: 'transfer', toAccountName: 'Вклад' }, 3),
+    );
+    expect(transfer).toContain('Общий → Вклад');
+  });
+
+  it('карточка: все поля и экранирование', () => {
+    const card = formatTxCard({ ...tx, label: '<b>кофе</b>', note: 'утро' });
+    expect(card).toContain('💸 Трата');
+    expect(card).toContain('2026-07-05');
+    expect(card).toContain('&lt;b&gt;кофе&lt;/b&gt;');
+    expect(card).toContain('Заметка: утро');
   });
 });
 

@@ -80,6 +80,93 @@ export function kbConfirm(confirmLabel = '✅ Записать'): InlineKeyboard
   return new InlineKeyboard().text(confirmLabel, CB.confirm).text(CANCEL_LABEL, CB.cancel);
 }
 
+// Список операций: кнопки-номера открывают карточку, ‹ › листают, «Фильтры» — меню.
+export function kbHistory(txIds: string[], page: number, pages: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  txIds.forEach((id, i) => {
+    // Нумерация в пределах страницы — совпадает со строками списка.
+    kb.text(String(i + 1), cb(CB.history, 'o', id));
+    if (i % 5 === 4) kb.row();
+  });
+  if (txIds.length % 5 !== 0) kb.row();
+
+  if (pages > 1) {
+    if (page > 0) kb.text('‹', cb(CB.history, 'p', page - 1));
+    kb.text(`стр. ${page + 1}/${pages}`, CB.noop);
+    if (page < pages - 1) kb.text('›', cb(CB.history, 'p', page + 1));
+    kb.row();
+  }
+  return kb.text('⚙️ Фильтры', cb(CB.history, 'f'));
+}
+
+// Меню фильтров истории.
+export function kbHistoryFilters(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('Все', cb(CB.history, 'ft', '-'))
+    .text('Траты', cb(CB.history, 'ft', 'e'))
+    .text('Доходы', cb(CB.history, 'ft', 'i'))
+    .text('Переводы', cb(CB.history, 'ft', 't'))
+    .row()
+    .text('Категория', cb(CB.history, 'fc'))
+    .text('Счёт', cb(CB.history, 'fa'))
+    .row()
+    .text('🔍 Поиск по метке', cb(CB.history, 'fq'))
+    .row()
+    .text('Месяц', cb(CB.history, 'fd', 'm'))
+    .text('Прош. месяц', cb(CB.history, 'fd', 'pm'))
+    .text('Всё время', cb(CB.history, 'fd', '-'))
+    .row()
+    .text('📅 Свой период', cb(CB.history, 'fd', 'c'))
+    .row()
+    .text('♻️ Сбросить фильтры', cb(CB.history, 'fx'))
+    .row()
+    .text('‹ К списку', cb(CB.history, 'b'));
+}
+
+// Карточка операции: правка полей и удаление.
+export function kbTxCard(txId: string, type: string): InlineKeyboard {
+  const e = (f: string) => cb(CB.edit, txId, f);
+  const kb = new InlineKeyboard()
+    .text('Сумма', e('a'))
+    .text('Дата', e('d'))
+    .row();
+  // У перевода категория/метка в боте не редактируются (обычно не нужны),
+  // счёт списания — тоже: за ним тянутся курс и сумма зачисления.
+  if (type !== 'transfer') {
+    kb.text('Категория', e('c')).text('Счёт', e('w')).row();
+    kb.text('Метка', e('l')).text('Заметка', e('n')).row();
+  } else {
+    kb.text('Заметка', e('n')).row();
+  }
+  return kb.text('🗑 Удалить', e('x')).row().text('‹ К списку', cb(CB.history, 'b'));
+}
+
+export function kbConfirmDelete(txId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('🗑 Да, удалить', cb(CB.edit, txId, 'xy'))
+    .text('Нет', cb(CB.history, 'o', txId));
+}
+
+// Быстрый выбор даты при редактировании (или дата текстом).
+export function kbEditDate(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('Сегодня', cb(CB.editDate, 't'))
+    .text('Вчера', cb(CB.editDate, 'y'));
+}
+
+// Теги — кнопками, отчёт по нажатию.
+export function kbTags(tags: NamedEntity[]): InlineKeyboard {
+  return grid(
+    new InlineKeyboard(),
+    tags.map((t) => ({ label: t.name, data: cb(CB.tag, t.id) })),
+  );
+}
+
+// Статус бюджетов + действие.
+export function kbBudget(): InlineKeyboard {
+  return new InlineKeyboard().text('✏️ Задать лимит', cb(CB.budget, 's'));
+}
+
 // Пресеты периодов статистики. Все кнопки несут текущий флаг доходов (:i),
 // чтобы переключение периода не сбрасывало режим; toggleData — перерисовка
 // текущего представления с противоположным флагом.

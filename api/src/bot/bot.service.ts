@@ -9,14 +9,15 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { Bot, type Context } from 'grammy';
-import { AnalyticsService } from '../analytics/analytics.service';
-import { formatBudget } from './format';
 import { SessionStore } from './session';
 import { CB, parseCb } from './callbacks';
 import { EntryHandler } from './handlers/entry.handler';
 import { TransferHandler } from './handlers/transfer.handler';
 import { InfoHandler } from './handlers/info.handler';
 import { StatsHandler } from './handlers/stats.handler';
+import { HistoryHandler } from './handlers/history.handler';
+import { EditHandler } from './handlers/edit.handler';
+import { BudgetHandler } from './handlers/budget.handler';
 
 const HELP = [
   '💸 <b>FinFlow-бот</b>',
@@ -29,10 +30,12 @@ const HELP = [
   'Команды:',
   '/today — траты за сегодня',
   '/month — траты за текущий месяц',
-  '/stats — месяц + бюджеты',
-  '/budget — статус бюджетов',
+  '/stats — аналитика за любой период',
+  '/history — операции: просмотр и правка',
+  '/budget — бюджеты (статус и лимиты)',
   '/accounts — балансы счетов',
   '/transfer — перевод между счетами',
+  '/tags — отчёты по тегам',
   '/cancel — сбросить текущий диалог',
   '/whoami — ваш Telegram ID',
 ].join('\n');
@@ -44,12 +47,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private allowed = new Set<number>();
 
   constructor(
-    private readonly analytics: AnalyticsService,
     private readonly sessions: SessionStore,
     private readonly entry: EntryHandler,
     private readonly transfer: TransferHandler,
     private readonly info: InfoHandler,
     private readonly stats: StatsHandler,
+    private readonly history: HistoryHandler,
+    private readonly edit: EditHandler,
+    private readonly budget: BudgetHandler,
   ) {}
 
   async onModuleInit() {
@@ -91,7 +96,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     bot.command('today', (ctx) => this.stats.command(ctx, 'd'));
     bot.command('month', (ctx) => this.stats.command(ctx, 'm'));
     bot.command('stats', (ctx) => this.stats.command(ctx, 'm'));
-    bot.command('budget', (ctx) => this.handleBudget(ctx));
+    bot.command('history', (ctx) => this.history.command(ctx));
+    bot.command('budget', (ctx) => this.budget.command(ctx));
+    bot.command('tags', (ctx) => this.info.tagsList(ctx));
     bot.command('accounts', (ctx) => this.info.accountsList(ctx));
     bot.command('transfer', (ctx) => this.transfer.start(ctx));
     bot.command('income', (ctx) =>
@@ -110,10 +117,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await bot.api.setMyCommands([
         { command: 'today', description: 'Траты за сегодня' },
         { command: 'month', description: 'Траты за месяц' },
-        { command: 'stats', description: 'Месяц + бюджеты' },
-        { command: 'budget', description: 'Статус бюджетов' },
+        { command: 'stats', description: 'Аналитика за любой период' },
+        { command: 'history', description: 'Операции: просмотр и правка' },
+        { command: 'budget', description: 'Бюджеты: статус и лимиты' },
         { command: 'accounts', description: 'Балансы счетов' },
         { command: 'transfer', description: 'Перевод между счетами' },
+        { command: 'tags', description: 'Отчёты по тегам' },
         { command: 'income', description: 'Как записать доход' },
         { command: 'cancel', description: 'Сбросить текущий диалог' },
         { command: 'help', description: 'Справка' },
@@ -153,8 +162,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Stateless-представления (статистика, динамика) — работают и без сессии,
-    // старые сообщения с такими кнопками живут вечно.
+    // Stateless-представления — работают и без сессии, старые сообщения
+    // с такими кнопками живут вечно (статистика, динамика, теги, карточка операции).
     const { ns, args } = parseCb(data);
     if (ns === CB.period && args[0] === 's') {
       return this.stats.handleCallback(ctx, args.slice(1));
@@ -162,10 +171,23 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (ns === CB.dynamics) {
       return this.stats.handleDynamics(ctx, args[0]);
     }
+    if (ns === CB.tag) {
+      return this.info.tagReport(ctx, args[0]);
+    }
+    if (ns === CB.edit) {
+      // txId в callback — карточка восстанавливает сессию сама
+      return this.edit.handleEditCallback(ctx, data);
+    }
+    if (ns === CB.history) {
+      return this.history.handleCallback(ctx, data);
+    }
+    if (ns === CB.budget) {
+      return this.budget.handleCallback(ctx);
+    }
 
     const session = this.sessions.get(userId);
     if (!session) {
-      await ctx.answerCallbackQuery({ text: 'Сессия истекла, отправьте трату заново.' });
+      await ctx.answerCallbackQuery({ text: 'Сессия истекла, начните заново.' });
       return;
     }
 
@@ -175,6 +197,17 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return this.entry.handleCallback(ctx, data, session);
       case 'transfer':
         return this.transfer.handleCallback(ctx, data, session);
+      case 'history':
+        // c:/a: — выбор значения фильтра
+        return this.history.handlePickCallback(ctx, data, session);
+      case 'edit':
+        if (ns === CB.editDate) {
+          return this.edit.handleDateShortcut(ctx, args[0], session);
+        }
+        // c:/s:/a: — смена категории или счёта операции
+        return this.edit.handlePickCallback(ctx, data, session);
+      case 'budget_set':
+        return this.budget.handlePickCallback(ctx, data, session);
       case 'await_range':
         // Кнопок в этом режиме нет — ждём текст с датами.
         return ctx.answerCallbackQuery();
@@ -183,22 +216,22 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private async routeText(ctx: Context) {
     const session = this.sessions.get(ctx.from!.id);
-    // Wizard перевода ждёт число (сумма/курс/зачисление) — не парсим его как трату.
+    // Диалоги, ожидающие текстовый ввод, — раньше парсинга трат.
     if (session?.mode === 'transfer') {
       return this.transfer.handleText(ctx, session);
     }
-    // «Свой диапазон» статистики ждёт две даты.
     if (session?.mode === 'await_range') {
       return this.stats.handleRangeText(ctx, session);
     }
+    if (session?.mode === 'history' && session.awaiting) {
+      return this.history.handleText(ctx, session);
+    }
+    if (session?.mode === 'edit' && session.field) {
+      return this.edit.handleText(ctx, session);
+    }
+    if (session?.mode === 'budget_set' && session.categoryId) {
+      return this.budget.handleText(ctx, session);
+    }
     return this.entry.handleText(ctx);
-  }
-
-  // ——— Бюджеты (уезжает в budget.handler в следующей итерации) ———
-
-  private async handleBudget(ctx: Context) {
-    const month = new Date().toISOString().slice(0, 7);
-    const budget = await this.analytics.budgetStatus({ month });
-    await ctx.reply(formatBudget(budget), { parse_mode: 'HTML' });
   }
 }

@@ -17,6 +17,7 @@ import { deriveMoney } from './money';
 import type {
   CreateTransactionDto,
   ListTransactionsDto,
+  ListTransactionsPagedDto,
   UpdateTransactionDto,
 } from '../common/schemas';
 
@@ -94,6 +95,23 @@ export class TransactionsService {
 
   // FR-B1 / FR-B4 / FR-B5 — список с фильтрами, новые сверху
   async list(filters: ListTransactionsDto) {
+    return this.query(this.buildConditions(filters));
+  }
+
+  // Постраничный список для Telegram-бота: те же фильтры + total для «стр. 2/5».
+  async listPaged(dto: ListTransactionsPagedDto) {
+    const conditions = this.buildConditions(dto);
+    const [{ count }] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(transactions)
+      .innerJoin(categories, eq(transactions.categoryId, categories.id))
+      .where(conditions.length ? and(...conditions) : undefined);
+
+    const items = await this.query(conditions, { limit: dto.limit, offset: dto.offset });
+    return { items, total: count, limit: dto.limit, offset: dto.offset };
+  }
+
+  private buildConditions(filters: ListTransactionsDto): SQL[] {
     const conditions: SQL[] = [];
     if (filters.categoryId) {
       // фильтр по категории захватывает и операции её подкатегорий
@@ -117,8 +135,7 @@ export class TransactionsService {
             where tt.transaction_id = ${transactions.id} and tt.tag_id = ${filters.tagId})`,
       );
     }
-
-    return this.query(conditions);
+    return conditions;
   }
 
   async findOne(id: string) {
@@ -127,10 +144,10 @@ export class TransactionsService {
     return row;
   }
 
-  private async query(conditions: SQL[]) {
+  private async query(conditions: SQL[], page?: { limit: number; offset: number }) {
     const sub = alias(categories, 'sub');
     const toAcc = alias(accounts, 'to_acc');
-    const rows = await this.db
+    const base = this.db
       .select({
         id: transactions.id,
         amount: transactions.amount,
@@ -163,6 +180,7 @@ export class TransactionsService {
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt));
 
+    const rows = page ? await base.limit(page.limit).offset(page.offset) : await base;
     return this.attachTags(rows);
   }
 
