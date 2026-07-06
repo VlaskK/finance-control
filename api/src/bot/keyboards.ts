@@ -56,8 +56,14 @@ export function kbSubcategories(children: NamedEntity[]): InlineKeyboard {
 }
 
 // Счета: основной — первым (✅), запись в один тап.
-export function kbAccounts(accounts: AccountOption[]): InlineKeyboard {
-  const ordered = [...accounts].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+// excludeId — спрятать счёт (получатель ≠ источник); withOutside — пункт «Вне счетов» (a:-).
+export function kbAccounts(
+  accounts: AccountOption[],
+  opts: { excludeId?: string; withOutside?: boolean } = {},
+): InlineKeyboard {
+  const ordered = [...accounts]
+    .filter((a) => a.id !== opts.excludeId)
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
   const kb = grid(
     new InlineKeyboard(),
     ordered.map((a) => ({
@@ -65,5 +71,11 @@ export function kbAccounts(accounts: AccountOption[]): InlineKeyboard {
       data: cb(CB.account, a.id),
     })),
   );
+  if (opts.withOutside) kb.row().text('Вне счетов (снятие/сторонний)', cb(CB.account, '-'));
   return kb.row().text(CANCEL_LABEL, CB.cancel);
+}
+
+// Финальное подтверждение (сводка перевода и т.п.).
+export function kbConfirm(confirmLabel = '✅ Записать'): InlineKeyboard {
+  return new InlineKeyboard().text(confirmLabel, CB.confirm).text(CANCEL_LABEL, CB.cancel);
 }

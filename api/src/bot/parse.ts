@@ -10,6 +10,19 @@ export interface ParsedExpense {
 
 const NUMBER_RE = /\d+(?:[.,]\d+)?/;
 
+// Доход — тот же формат, но с ведущим «+»: «+50000 зарплата».
+export function parseIncomeInput(text: string): ParsedExpense | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('+')) return null;
+  return parseExpenseInput(trimmed.slice(1));
+}
+
+// Положительное число из текстового ответа (курс, сумма перевода); запятая допустима.
+export function parsePositiveNumber(text: string): number | null {
+  const value = Number(text.trim().replace(',', '.'));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 export function parseExpenseInput(text: string): ParsedExpense | null {
   const trimmed = text.trim();
   if (!trimmed) return null;

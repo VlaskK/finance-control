@@ -73,14 +73,24 @@ export function formatBudget(data: BudgetResult): string {
 }
 
 interface CreatedTx {
+  type?: string;
   amount: string;
   currency: string;
   baseAmount: string;
   accountName: string;
+  toAccountName?: string | null;
+  toAmount?: string | null;
+  toCurrency?: string | null;
   categoryName: string;
   subcategoryName: string | null;
   label: string | null;
 }
+
+const CONFIRM_VERB: Record<string, string> = {
+  expense: '✅ Записал',
+  income: '✅ Доход',
+  transfer: '✅ Перевод',
+};
 
 export function formatConfirmation(tx: CreatedTx, budgetAlert?: string): string {
   const cat = tx.subcategoryName
@@ -88,9 +98,40 @@ export function formatConfirmation(tx: CreatedTx, budgetAlert?: string): string 
     : escapeHtml(tx.categoryName);
   const label = tx.label ? ` «${escapeHtml(tx.label)}»` : '';
   const fx = tx.currency !== 'RUB' ? ` ≈ ${formatAmount(Number(tx.baseAmount))}` : '';
+  const verb = CONFIRM_VERB[tx.type ?? 'expense'] ?? CONFIRM_VERB.expense;
   let msg =
-    `✅ Записал: <b>${formatAmount(Number(tx.amount), tx.currency)}</b>${fx} — ${cat}${label}` +
-    `\nСчёт: ${escapeHtml(tx.accountName)}`;
+    `${verb}: <b>${formatAmount(Number(tx.amount), tx.currency)}</b>${fx} — ${cat}${label}`;
+
+  if (tx.type === 'transfer') {
+    // Маршрут: источник → получатель (или «вне счетов») с суммой зачисления.
+    const target = tx.toAccountName
+      ? `${escapeHtml(tx.toAccountName)}` +
+        (tx.toAmount ? ` (зачислено ${formatAmount(Number(tx.toAmount), tx.toCurrency ?? 'RUB')})` : '')
+      : 'вне счетов';
+    msg += `\n${escapeHtml(tx.accountName)} → ${target}`;
+  } else {
+    msg += `\nСчёт: ${escapeHtml(tx.accountName)}`;
+  }
+
   if (budgetAlert) msg += `\n\n${budgetAlert}`;
   return msg;
+}
+
+interface AccountRow {
+  name: string;
+  currency: string;
+  balance: number;
+  isDefault: boolean;
+  currentRate: number | null;
+}
+
+// Балансы счетов для /accounts: основной помечен, у вкладов — текущая ставка.
+export function formatAccounts(accounts: AccountRow[]): string {
+  if (!accounts.length) return 'Нет активных счетов.';
+  const lines = accounts.map((a) => {
+    const marker = a.isDefault ? '✅ ' : '• ';
+    const rate = a.currentRate != null ? ` · ставка ${a.currentRate}%` : '';
+    return `${marker}${escapeHtml(a.name)} — <b>${formatAmount(a.balance, a.currency)}</b>${rate}`;
+  });
+  return ['<b>Счета</b>', '', ...lines].join('\n');
 }

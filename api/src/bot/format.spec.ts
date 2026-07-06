@@ -1,4 +1,11 @@
-import { escapeHtml, formatAmount, formatBreakdown, formatBudget, formatConfirmation } from './format';
+import {
+  escapeHtml,
+  formatAccounts,
+  formatAmount,
+  formatBreakdown,
+  formatBudget,
+  formatConfirmation,
+} from './format';
 
 // Intl для ru-RU использует неразрывные пробелы — нормализуем для сравнения.
 const plain = (s: string) => s.replace(/[  ]/g, ' ');
@@ -100,5 +107,55 @@ describe('formatConfirmation', () => {
 
   it('добавляет бюджетный алерт', () => {
     expect(formatConfirmation(tx, '🔴 Превышен')).toContain('🔴 Превышен');
+  });
+
+  it('доход подписывается как доход', () => {
+    const text = formatConfirmation({ ...tx, type: 'income', currency: 'RUB', baseAmount: '500' });
+    expect(text).toContain('✅ Доход');
+  });
+
+  it('перевод показывает маршрут и зачисление', () => {
+    const text = plain(
+      formatConfirmation({
+        ...tx,
+        type: 'transfer',
+        currency: 'USD',
+        toAccountName: 'Общий',
+        toAmount: '45250',
+        toCurrency: 'RUB',
+      }),
+    );
+    expect(text).toContain('✅ Перевод');
+    expect(text).toContain('Валютный → Общий');
+    expect(text).toContain('зачислено 45 250 ₽');
+  });
+
+  it('перевод вне счетов', () => {
+    const text = formatConfirmation({
+      ...tx,
+      type: 'transfer',
+      toAccountName: null,
+      toAmount: null,
+      toCurrency: null,
+    });
+    expect(text).toContain('→ вне счетов');
+  });
+});
+
+describe('formatAccounts', () => {
+  it('основной помечен, ставка показана', () => {
+    const text = plain(
+      formatAccounts([
+        { name: 'Общий', currency: 'RUB', balance: 1000, isDefault: true, currentRate: null },
+        { name: 'Вклад', currency: 'RUB', balance: 50000, isDefault: false, currentRate: 18 },
+      ]),
+    );
+    expect(text).toContain('✅ Общий');
+    expect(text).toContain('1 000 ₽');
+    expect(text).toContain('ставка 18%');
+  });
+
+  it('пусто — заглушка', () => {
+    expect(formatAccounts([])).toBe('Нет активных счетов.');
   });
 });

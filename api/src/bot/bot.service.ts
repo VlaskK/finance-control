@@ -14,12 +14,15 @@ import { formatBreakdown, formatBudget } from './format';
 import { SessionStore } from './session';
 import { CB } from './callbacks';
 import { EntryHandler } from './handlers/entry.handler';
+import { TransferHandler } from './handlers/transfer.handler';
+import { InfoHandler } from './handlers/info.handler';
 
 const HELP = [
   '💸 <b>FinFlow-бот</b>',
   '',
-  'Чтобы записать трату — пришлите сумму и описание, например:',
-  '<code>кофе 200</code> или <code>200 такси домой</code>',
+  'Трата: <code>кофе 200</code> или <code>200 такси домой</code>',
+  'Доход: <code>+50000 зарплата</code> (плюс перед суммой)',
+  'Перевод между счетами: /transfer',
   'Бот предложит категорию и счёт; для валютного счёта спросит курс.',
   '',
   'Команды:',
@@ -27,6 +30,9 @@ const HELP = [
   '/month — траты за текущий месяц',
   '/stats — месяц + бюджеты',
   '/budget — статус бюджетов',
+  '/accounts — балансы счетов',
+  '/transfer — перевод между счетами',
+  '/cancel — сбросить текущий диалог',
   '/whoami — ваш Telegram ID',
 ].join('\n');
 
@@ -40,6 +46,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly analytics: AnalyticsService,
     private readonly sessions: SessionStore,
     private readonly entry: EntryHandler,
+    private readonly transfer: TransferHandler,
+    private readonly info: InfoHandler,
   ) {}
 
   async onModuleInit() {
@@ -82,6 +90,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     bot.command('month', (ctx) => this.handleStats(ctx, 'month', 'Траты за месяц'));
     bot.command('stats', (ctx) => this.handleStatsAndBudget(ctx));
     bot.command('budget', (ctx) => this.handleBudget(ctx));
+    bot.command('accounts', (ctx) => this.info.accountsList(ctx));
+    bot.command('transfer', (ctx) => this.transfer.start(ctx));
+    bot.command('income', (ctx) =>
+      ctx.reply('Доход — плюс перед суммой: <code>+50000 зарплата</code>', {
+        parse_mode: 'HTML',
+      }),
+    );
+    bot.command('cancel', (ctx) => this.info.cancel(ctx));
 
     bot.on('callback_query:data', (ctx) => this.routeCallback(ctx));
     bot.on('message:text', (ctx) => this.routeText(ctx));
@@ -94,6 +110,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         { command: 'month', description: 'Траты за месяц' },
         { command: 'stats', description: 'Месяц + бюджеты' },
         { command: 'budget', description: 'Статус бюджетов' },
+        { command: 'accounts', description: 'Балансы счетов' },
+        { command: 'transfer', description: 'Перевод между счетами' },
+        { command: 'income', description: 'Как записать доход' },
+        { command: 'cancel', description: 'Сбросить текущий диалог' },
         { command: 'help', description: 'Справка' },
         { command: 'whoami', description: 'Мой Telegram ID' },
       ]);
@@ -139,11 +159,19 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     switch (session.mode) {
       case 'expense':
+      case 'income':
         return this.entry.handleCallback(ctx, data, session);
+      case 'transfer':
+        return this.transfer.handleCallback(ctx, data, session);
     }
   }
 
   private async routeText(ctx: Context) {
+    const session = this.sessions.get(ctx.from!.id);
+    // Wizard перевода ждёт число (сумма/курс/зачисление) — не парсим его как трату.
+    if (session?.mode === 'transfer') {
+      return this.transfer.handleText(ctx, session);
+    }
     return this.entry.handleText(ctx);
   }
 

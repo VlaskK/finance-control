@@ -1,4 +1,38 @@
-import { parseExpenseInput } from './parse';
+import { parseExpenseInput, parseIncomeInput, parsePositiveNumber } from './parse';
+
+describe('parseIncomeInput', () => {
+  it('«+50000 зарплата» → доход', () => {
+    expect(parseIncomeInput('+50000 зарплата')).toEqual({
+      amount: 50000,
+      label: 'зарплата',
+      note: null,
+    });
+  });
+
+  it('пробелы перед плюсом допустимы', () => {
+    expect(parseIncomeInput('  +100 кэшбек')?.amount).toBe(100);
+  });
+
+  it('без плюса — не доход', () => {
+    expect(parseIncomeInput('50000 зарплата')).toBeNull();
+  });
+
+  it('плюс без числа → null', () => {
+    expect(parseIncomeInput('+зарплата')).toBeNull();
+  });
+});
+
+describe('parsePositiveNumber', () => {
+  it('число с запятой', () => {
+    expect(parsePositiveNumber('90,5')).toBe(90.5);
+  });
+
+  it('отклоняет ноль, отрицательные и мусор', () => {
+    expect(parsePositiveNumber('0')).toBeNull();
+    expect(parsePositiveNumber('-5')).toBeNull();
+    expect(parsePositiveNumber('абв')).toBeNull();
+  });
+});
 
 describe('parseExpenseInput', () => {
   it('метка перед суммой', () => {

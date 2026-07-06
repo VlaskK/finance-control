@@ -4,10 +4,10 @@
 
 import { Injectable } from '@nestjs/common';
 
-// Черновик ввода траты. В следующих итерациях union расширяется режимами
-// income/transfer/history/edit/budget_set — диспетчеризация по полю mode.
+// Черновик ввода траты или дохода: флоу общий, различается типом категорий
+// (expense/income), отсутствием бюджетного алерта у дохода и текстами.
 export interface EntryDraft {
-  mode: 'expense';
+  mode: 'expense' | 'income';
   amount: number;
   label: string | null;
   note: string | null;
@@ -18,7 +18,25 @@ export interface EntryDraft {
   awaitingRate?: boolean;
 }
 
-export type Session = EntryDraft;
+// Черновик перевода. Какой шаг следующий — выводится из заполненности полей
+// чистой функцией nextTransferStep (transfer-steps.ts), в сессии шаг не храним.
+// toId: undefined — счёт-получатель ещё не выбран, null — «вне счетов».
+export interface TransferDraft {
+  mode: 'transfer';
+  categoryId?: string;
+  subcategoryId?: string | null;
+  fromId?: string;
+  fromName?: string;
+  fromCurrency?: string;
+  toId?: string | null;
+  toName?: string | null;
+  toCurrency?: string | null;
+  amount?: number;
+  rate?: number;
+  toAmount?: number;
+}
+
+export type Session = EntryDraft | TransferDraft;
 
 const TTL_MS = 30 * 60 * 1000;
 
