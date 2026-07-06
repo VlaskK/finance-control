@@ -5,6 +5,7 @@ coverage/
 *.log
 .env
 .env.local
+finflow.sql
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
