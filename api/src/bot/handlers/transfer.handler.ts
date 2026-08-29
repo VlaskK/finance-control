@@ -1,5 +1,5 @@
-// Wizard перевода между счетами: категория → откуда → куда (или «вне счетов») →
-// сумма → [курс] → [сумма зачисления] → сводка → запись.
+// Wizard перевода между счетами: категория (необязательна) → откуда → куда
+// (или «вне счетов») → сумма → [курс] → [сумма зачисления] → сводка → запись.
 // Последовательность шагов выводится из черновика чистой nextTransferStep()
 // (transfer-steps.ts), сами правила валют зеркалят deriveMoney.
 
@@ -33,18 +33,12 @@ export class TransferHandler {
       return;
     }
 
-    const roots = await this.transferRoots();
-    if (!roots.length) {
-      await ctx.reply('Нет категорий переводов. Создайте их в приложении.');
-      return;
-    }
-
     const draft: TransferDraft = { mode: 'transfer' };
+    const roots = await this.transferRoots();
 
-    // Единственная категория без подкатегорий — пропускаем шаг выбора.
-    const children = roots.length === 1 ? roots[0].children.filter((c) => c.active) : [];
-    if (roots.length === 1 && !children.length) {
-      draft.categoryId = roots[0].id;
+    // Категория переводу не обязательна — без подходящих категорий шаг пропускаем.
+    if (!roots.length) {
+      draft.categoryId = null;
       draft.subcategoryId = null;
       this.sessions.set(userId, draft);
       await this.prompt(ctx, draft);
@@ -52,7 +46,9 @@ export class TransferHandler {
     }
 
     this.sessions.set(userId, draft);
-    await ctx.reply('Категория перевода:', { reply_markup: kbCategoryRoots(roots) });
+    await ctx.reply('Категория перевода:', {
+      reply_markup: kbCategoryRoots(roots, { withNone: true }),
+    });
   }
 
   // Текстовый ввод: сумма, курс или сумма зачисления — что сейчас ожидается по шагу.
@@ -84,6 +80,15 @@ export class TransferHandler {
 
     if (ns === CB.category) {
       const rootId = args[0];
+      if (rootId === '-') {
+        draft.categoryId = null;
+        draft.subcategoryId = null;
+        await ctx.answerCallbackQuery();
+        this.sessions.set(userId, draft);
+        await this.prompt(ctx, draft);
+        return;
+      }
+
       const roots = await this.transferRoots();
       const root = roots.find((r) => r.id === rootId);
       const children = (root?.children ?? []).filter((c) => c.active);
@@ -207,7 +212,8 @@ export class TransferHandler {
     this.sessions.clear(userId);
     const tx = await this.transactions.create({
       amount: draft.amount!,
-      categoryId: draft.categoryId!,
+      categoryId: draft.categoryId ?? null,
+      type: 'transfer', // без категории тип иначе не определить
       subcategoryId: draft.subcategoryId ?? null,
       label: null,
       note: null,

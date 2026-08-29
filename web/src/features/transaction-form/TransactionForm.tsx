@@ -156,7 +156,8 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
     const rate = parseAmountInput(rateStr);
     const nextErrors: typeof errors = {};
     if (amount === null || amount <= 0) nextErrors.amount = 'Введите сумму больше нуля';
-    if (!categoryId) nextErrors.categoryId = 'Выберите категорию';
+    // у перевода категория необязательна — сервер подставит служебную
+    if (!categoryId && type !== 'transfer') nextErrors.categoryId = 'Выберите категорию';
     if (needRate && (rate === null || rate <= 0)) {
       nextErrors.rate = `Укажите курс: сколько рублей за 1 ${rateCurrency}`;
     }
@@ -166,8 +167,9 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
     const toAmount = parseAmountInput(toAmountStr);
     const input: CreateTransactionInput = {
       amount: amount!,
-      categoryId,
-      subcategoryId: subcategoryId || null,
+      categoryId: categoryId || null,
+      type,
+      subcategoryId: (categoryId && subcategoryId) || null,
       occurredAt,
       label: label.trim() || null,
       note: note.trim() || null,
@@ -299,7 +301,11 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
       )}
 
       <div className="form-row">
-        <Field label="Категория" error={errors.categoryId}>
+        <Field
+          label="Категория"
+          error={errors.categoryId}
+          hint={type === 'transfer' ? 'необязательно' : undefined}
+        >
           <select
             value={categoryId}
             onChange={(e) => {
@@ -307,7 +313,7 @@ export function TransactionForm({ mode, initial, busy, onSubmit }: Props) {
               setSubcategoryId('');
             }}
           >
-            <option value="">— выберите —</option>
+            <option value="">{type === 'transfer' ? '— без категории —' : '— выберите —'}</option>
             {roots.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

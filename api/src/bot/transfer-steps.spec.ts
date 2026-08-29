@@ -21,6 +21,10 @@ describe('nextTransferStep — порядок шагов', () => {
     expect(nextTransferStep(draft({ categoryId: 'cat' }))).toBe('from');
   });
 
+  it('категория null («без категории») — шаг пройден, спрашиваем откуда', () => {
+    expect(nextTransferStep(draft({ categoryId: null }))).toBe('from');
+  });
+
   it('toId undefined → куда; toId null («вне счетов») — выбор сделан', () => {
     expect(nextTransferStep(draft({ categoryId: 'cat', fromId: 'f', fromCurrency: 'RUB' }))).toBe('to');
     expect(

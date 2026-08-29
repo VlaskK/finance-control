@@ -96,7 +96,9 @@ export interface TransactionRow {
 
 export interface CreateTransactionInput {
   amount: number;
-  categoryId: string;
+  // у переводов категория необязательна — сервер подставит служебную
+  categoryId?: string | null;
+  type?: TxType; // нужен, когда категория не указана
   subcategoryId?: string | null;
   occurredAt?: string;
   label?: string | null;

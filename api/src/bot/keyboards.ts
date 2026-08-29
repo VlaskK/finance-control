@@ -35,11 +35,16 @@ function grid(kb: InlineKeyboard, items: Array<{ label: string; data: string }>)
   return kb;
 }
 
-export function kbCategoryRoots(roots: NamedEntity[]): InlineKeyboard {
+// withNone — пункт «Без категории» (c:-); нужен переводам, где категория необязательна.
+export function kbCategoryRoots(
+  roots: NamedEntity[],
+  opts: { withNone?: boolean } = {},
+): InlineKeyboard {
   const kb = grid(
     new InlineKeyboard(),
     roots.map((r) => ({ label: r.name, data: cb(CB.category, r.id) })),
   );
+  if (opts.withNone) kb.row().text('Без категории', cb(CB.category, '-'));
   return kb.row().text(CANCEL_LABEL, CB.cancel);
 }
 
