@@ -49,6 +49,13 @@ describe('kbCategoryRoots', () => {
     const last = kb.inline_keyboard.at(-1)!;
     expect(last[0]).toMatchObject({ callback_data: 'x' });
   });
+
+  it('withNone добавляет «Без категории» (c:-)', () => {
+    const kb = kbCategoryRoots([{ id: UUID_A, name: 'Накопления' }], { withNone: true });
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain('c:-');
+  });
 });
 
 describe('kbSubcategories', () => {

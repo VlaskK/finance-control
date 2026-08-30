@@ -11,6 +11,11 @@ export interface SeedCategory {
   children?: string[];
 }
 
+// Служебная категория переводов без категории. Тип операции выводится из категории
+// (BR-10), поэтому переводу «без категории» всё равно нужна запись в categories —
+// сервер подставляет эту (TransactionsService.resolveCategory), создавая при нехватке.
+export const SYSTEM_TRANSFER_CATEGORY = 'Перевод между счетами';
+
 export const DEFAULT_CATEGORIES: SeedCategory[] = [
   // --- РАСХОД ---
   { name: 'Продукты', type: 'expense', color: '#e74c3c', description: 'Еда и напитки домой: магазины, рынок.' },
@@ -87,6 +92,12 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
   { name: 'Прочее', type: 'expense', color: '#95a5a6', description: 'Если не подходит никуда — сюда, с последующей ревизией.' },
 
   // --- ПЕРЕВОД / НАКОПЛЕНИЕ (вне потребления и инфляции, BR-10) ---
+  {
+    name: SYSTEM_TRANSFER_CATEGORY,
+    type: 'transfer',
+    color: '#7f8c8d',
+    description: 'Перемещение своих денег между счетами — без категории.',
+  },
   {
     name: 'Накопления и инвестиции',
     type: 'transfer',

@@ -65,6 +65,60 @@ npm run start:dev               # http://localhost:3000
 - `/budget` — план/факт по бюджетам; при близости к лимиту или превышении бот предупреждает
   сразу после записи траты.
 
+## Деплой и откат
+
+Прод — один сервер в режиме «только бот»: наружу не публикуется ничего, бот сам ходит в
+Telegram (long polling). Оверрайд — [`docker-compose.prod.yml`](docker-compose.prod.yml), там же
+описан SSH-туннель, если нужно подключить локальный веб к прод-API.
+
+Перед деплоем — дамп БД (автоматического бэкапа в деплое нет):
+
+```bash
+docker exec finflow-postgres pg_dump -U finflow --clean --if-exists finflow > finflow-$(date +%F).sql
+```
+
+Деплой:
+
+```bash
+ssh root@<server-ip>
+cd finance
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose logs -f api          # убедиться, что миграции прошли и бот поднялся
+```
+
+Миграции из `api/drizzle` и сидинг дефолтных категорий выполняются при каждом старте
+контейнера, оба идемпотентны (`CMD` в [`api/Dockerfile`](api/Dockerfile)). Важное следствие:
+на непустой БД сидинг пропускает себя целиком, поэтому новые дефолтные категории на прод
+через него не попадают — если категория нужна работающему коду, она должна создаваться
+лениво (так сделана служебная «Перевод между счетами» в `TransactionsService`).
+
+Откат:
+
+```bash
+git checkout <прошлый-sha>   # или git revert <merge-sha>, чтобы остаться на main
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Откат кода безопасен, пока в релизе не было новой миграции. Проверить:
+
+```bash
+git diff --stat <sha-на-проде>..HEAD -- api/drizzle
+```
+
+Пусто — откатывается одной пересборкой: схема БД не менялась, а данные, появившиеся под новой
+версией, старый код читает как обычные записи. Если миграция была, down-скриптов у drizzle нет:
+аддитивные изменения (новая колонка или таблица) старый код обычно переживает, несовместимые —
+только восстановлением из дампа:
+
+```bash
+docker exec -i finflow-postgres psql -U finflow -d finflow < finflow-2026-08-28.sql
+```
+
+Если после деплоя бот молчит — первым делом проверить запиненный IP `api.telegram.org`
+в `docker-compose.prod.yml`: с РФ-серверов часть подсети Telegram заблокирована, и рабочий
+адрес со временем меняется.
+
 ## Тесты (NFR-T1)
 
 ```bash

@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, gte, ilike, inArray, lte, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNull, lte, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DB, type Database } from '../database/database.module';
 import {
@@ -11,7 +11,9 @@ import {
   transactionTags,
   transactions,
   type Account,
+  type Category,
 } from '../database/schema';
+import { SYSTEM_TRANSFER_CATEGORY } from '../database/default-categories';
 import { AccountsService } from '../accounts/accounts.service';
 import { deriveMoney } from './money';
 import type {
@@ -35,11 +37,7 @@ export class TransactionsService {
   // FR-A1 — создание операции. Тип берётся от категории (BR-10 опирается на него),
   // валюта — от счёта списания; производные суммы выводит deriveMoney.
   async create(dto: CreateTransactionDto) {
-    const [category] = await this.db
-      .select()
-      .from(categories)
-      .where(eq(categories.id, dto.categoryId));
-    if (!category) throw new NotFoundException('Категория не найдена');
+    const category = await this.resolveCategory(dto);
 
     const account = dto.accountId
       ? await this.accounts.findOne(dto.accountId)
@@ -69,7 +67,7 @@ export class TransactionsService {
       .insert(transactions)
       .values({
         amount: dto.amount.toFixed(2),
-        categoryId: dto.categoryId,
+        categoryId: category.id,
         subcategoryId: dto.subcategoryId ?? null,
         occurredAt: dto.occurredAt ?? today(),
         label: dto.label || null,
@@ -88,7 +86,7 @@ export class TransactionsService {
 
     // BR-7 — обучаемый автовыбор: запоминаем связку метка → (категория, подкатегория)
     if (dto.label) {
-      await this.rememberLabel(dto.label, dto.categoryId, dto.subcategoryId ?? null);
+      await this.rememberLabel(dto.label, category.id, dto.subcategoryId ?? null);
     }
     return this.findOne(row.id);
   }
@@ -191,16 +189,19 @@ export class TransactionsService {
 
     // Итоговые значения после слияния dto поверх существующей строки.
     const amount = dto.amount ?? Number(existing.amount);
-    const categoryId = dto.categoryId ?? existing.categoryId;
     const accountId = dto.accountId ?? existing.accountId;
     const toAccountId =
       dto.toAccountId !== undefined ? dto.toAccountId : existing.toAccountId;
 
-    const [category] = await this.db
-      .select()
-      .from(categories)
-      .where(eq(categories.id, categoryId));
-    if (!category) throw new NotFoundException('Категория не найдена');
+    // categoryId: undefined — оставляем как было; null — снятие категории. Снять её
+    // можно только у перевода, поэтому тип берём из dto либо из текущей категории.
+    let category = await this.resolveCategory({ categoryId: existing.categoryId });
+    if (dto.categoryId !== undefined) {
+      category = await this.resolveCategory({
+        categoryId: dto.categoryId,
+        type: dto.categoryId === null ? (dto.type ?? category.type) : dto.type,
+      });
+    }
 
     const account = await this.accounts.findOne(accountId);
     // Тип ушёл от перевода — поля назначения обнуляются.
@@ -249,7 +250,7 @@ export class TransactionsService {
       .update(transactions)
       .set({
         ...(dto.amount !== undefined && { amount: dto.amount.toFixed(2) }),
-        ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
+        ...(dto.categoryId !== undefined && { categoryId: category.id }),
         ...(dto.subcategoryId !== undefined && { subcategoryId: dto.subcategoryId }),
         ...(dto.occurredAt !== undefined && { occurredAt: dto.occurredAt }),
         ...(dto.label !== undefined && { label: dto.label || null }),
@@ -300,6 +301,52 @@ export class TransactionsService {
       .where(eq(transactions.id, id));
     if (!row) throw new NotFoundException('Операция не найдена');
     return row;
+  }
+
+  // Категория операции. Не указана — это перевод: подставляем служебную категорию
+  // (тип операции выводится из категории, BR-10, поэтому без записи не обойтись).
+  private async resolveCategory(input: {
+    categoryId?: string | null;
+    type?: CreateTransactionDto['type'];
+  }): Promise<Category> {
+    if (input.categoryId) {
+      const [category] = await this.db
+        .select()
+        .from(categories)
+        .where(eq(categories.id, input.categoryId));
+      if (!category) throw new NotFoundException('Категория не найдена');
+      return category;
+    }
+    if (input.type !== undefined && input.type !== 'transfer') {
+      throw new BadRequestException('Выберите категорию');
+    }
+    return this.ensureTransferCategory();
+  }
+
+  // Служебная категория переводов; создаётся лениво — БД могла быть засеяна до неё.
+  private async ensureTransferCategory(): Promise<Category> {
+    const [existing] = await this.db
+      .select()
+      .from(categories)
+      .where(
+        and(
+          eq(categories.name, SYSTEM_TRANSFER_CATEGORY),
+          eq(categories.type, 'transfer'),
+          isNull(categories.parentId),
+        ),
+      );
+    if (existing) return existing;
+
+    const [created] = await this.db
+      .insert(categories)
+      .values({
+        name: SYSTEM_TRANSFER_CATEGORY,
+        type: 'transfer',
+        color: '#7f8c8d',
+        description: 'Перемещение своих денег между счетами — без категории.',
+      })
+      .returning();
+    return created;
   }
 
   // Счёт зачисления перевода: null допустим (перевод «вне счетов»), сам в себя — нельзя.

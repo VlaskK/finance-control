@@ -55,10 +55,14 @@ export const setRateSchema = z.object({
   effectiveFrom: isoDate,
 });
 
-// FR-A1 / FR-A6 — создание операции
-export const createTransactionSchema = z.object({
+// FR-A1 / FR-A6 — поля операции.
+// Категория обязательна для трат и доходов, но не для переводов: перевод между
+// счетами сам по себе не относится к категории, и сервер подставляет служебную.
+// type нужен только чтобы отличить такой перевод (обычно тип берётся от категории).
+const transactionFields = {
   amount: z.coerce.number().positive('Введите сумму больше нуля'),
-  categoryId: z.string().uuid('Выберите категорию'),
+  categoryId: z.string().uuid('Выберите категорию').optional().nullable(),
+  type: txTypeSchema.optional(),
   subcategoryId: uuid.optional().nullable(),
   occurredAt: isoDate.optional(), // по умолчанию сегодня (FR-A2)
   label: z.string().trim().max(120).optional().nullable(),
@@ -69,10 +73,23 @@ export const createTransactionSchema = z.object({
   toAmount: z.coerce.number().positive().optional().nullable(),
   recurringId: uuid.optional().nullable(), // BR-12
   tagIds: z.array(uuid).max(20).optional(), // FR-A5 / BR-9
-});
+};
 
-// FR-B2 — частичное обновление
-export const updateTransactionSchema = createTransactionSchema.partial();
+export const createTransactionSchema = z
+  .object(transactionFields)
+  .superRefine((dto, ctx) => {
+    if (!dto.categoryId && dto.type !== 'transfer') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['categoryId'],
+        message: 'Выберите категорию',
+      });
+    }
+  });
+
+// FR-B2 — частичное обновление (категория здесь опциональна по определению:
+// отсутствие поля = «не менять», null = «убрать категорию у перевода»)
+export const updateTransactionSchema = z.object(transactionFields).partial();
 
 // FR-B4 / FR-B5 — фильтры и поиск по метке
 export const listTransactionsSchema = z.object({

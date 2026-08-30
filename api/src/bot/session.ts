@@ -20,10 +20,11 @@ export interface EntryDraft {
 
 // Черновик перевода. Какой шаг следующий — выводится из заполненности полей
 // чистой функцией nextTransferStep (transfer-steps.ts), в сессии шаг не храним.
-// toId: undefined — счёт-получатель ещё не выбран, null — «вне счетов».
+// toId: undefined — счёт-получатель ещё не выбран, null — «вне счетов»;
+// categoryId: undefined — категорию ещё не спрашивали, null — «без категории».
 export interface TransferDraft {
   mode: 'transfer';
-  categoryId?: string;
+  categoryId?: string | null;
   subcategoryId?: string | null;
   fromId?: string;
   fromName?: string;

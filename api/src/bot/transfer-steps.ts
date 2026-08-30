@@ -37,7 +37,8 @@ export function needsToAmount(d: TransferDraft): boolean {
 }
 
 export function nextTransferStep(d: TransferDraft): TransferStep {
-  if (!d.categoryId) return 'category';
+  // undefined — категорию ещё не спрашивали; null = «без категории» — выбор сделан
+  if (d.categoryId === undefined) return 'category';
   if (!d.fromId) return 'from';
   if (d.toId === undefined) return 'to'; // null = «вне счетов» — выбор сделан
   if (d.amount == null) return 'amount';
