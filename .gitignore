@@ -10,5 +10,8 @@ finflow.sql
 .vscode/*
 !.vscode/extensions.json
 
+# Личные разрешения Claude Code — у каждого свои
+.claude/settings.local.json
+
 # Внутренний документ — не публикуем
 Требования_FinanceTracker.md
