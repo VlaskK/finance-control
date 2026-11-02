@@ -6,14 +6,15 @@ description: Run FinFlow locally — web dev server on localhost:5173 against th
 # Running FinFlow
 
 There is exactly one working setup: **the web runs locally, the API and database live on the
-server** (Reg.cloud, 194.226.115.219). A local api+postgres pair also exists, but it is a
+server** (Reg.cloud; IP is in the deploy notes, not in the repo). A local api+postgres pair
+also exists, but it is a
 frozen copy from the migration — do not start it for normal work (see Pitfalls).
 
 ## Step 1. Tunnel to the production API (port 3000)
 
 The API is not exposed publicly, only on the server's loopback. The forward is owned by the
 `FinFlowTunnel` scheduled task (trigger: Windows logon, script
-`C:\Users\Владислав\finflow-tunnel.ps1`, an infinite `ssh -N -L` loop that reconnects).
+`%USERPROFILE%\finflow-tunnel.ps1`, an infinite `ssh -N -L` loop that reconnects).
 
 Check it, and start it if needed:
 
@@ -26,8 +27,8 @@ Start-Sleep -Seconds 6
 Expect `200`. State `Ready` instead of `Running` is normal after a reboot where the task did
 not fire on logon — just start it.
 
-If `200` never arrives, the tunnel is not up: try `ssh root@194.226.115.219` by hand and
-check that the `finflow-api` container is alive on the server.
+If `200` never arrives, the tunnel is not up: ssh to the server by hand (the task's script
+holds the address) and check that the `finflow-api` container is alive there.
 
 ## Step 2. Web
 
