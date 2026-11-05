@@ -14,6 +14,7 @@ export const CB = {
   noop: '-', // кнопка-индикатор, ничего не делает («стр. 2/5»)
   period: 'p', // p:s:<preset>[:i] | p:s:r:<YYYYMMDD>:<YYYYMMDD>[:i] — периоды статистики (stateless)
   dynamics: 'dn', // dn:<6|12> — динамика за N месяцев (stateless)
+  catTotals: 'ct', // ct:l:<период> | ct:c:<uuid>:<период> | ct:r[:<uuid>] — суммы по категориям
   history: 'h', // h:p:<page> | h:o:<txId> | h:f | h:ft:<e|i|t|-> | h:fc | h:fa | h:fq | h:fd:<...> | h:fx | h:b
   edit: 'e', // e:<txId>:<a|d|l|n|c|w|x|xy> — редактирование полей операции
   editDate: 'ed', // ed:<t|y> — быстрая дата (сегодня/вчера), txId в сессии

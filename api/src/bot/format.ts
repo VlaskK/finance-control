@@ -88,8 +88,8 @@ function fitName(name: string, width = 10): string {
 }
 
 interface StatsData {
-  from: string;
-  to: string;
+  from: string | null; // null — отчёт за всё время
+  to: string | null;
   total: number;
   items: Array<{ name: string; type: string; amount: number; count: number; share: number | null }>;
 }
@@ -133,6 +133,84 @@ export function formatStats(title: string, data: StatsData, opts: { income: bool
     }
   }
 
+  return lines.join('\n');
+}
+
+// Подсказка для ввода своего диапазона дат (общая для /stats и разбивки по категориям).
+export const RANGE_HINT =
+  'Пришлите две даты — начало и конец периода, например:\n' +
+  '<code>01.06 30.06</code> или <code>2026-06-01 2026-06-30</code>';
+
+interface CategoryTotalsChild {
+  name: string;
+  amount: number;
+  count: number;
+  share: number | null;
+}
+
+interface CategoryTotalsItem {
+  categoryId: string;
+  name: string;
+  type: string;
+  amount: number;
+  count: number;
+  share: number | null;
+  children: CategoryTotalsChild[];
+}
+
+// Строки «имя — бар — сумма — доля» фиксированной ширины (как в formatStats).
+function amountLines(
+  items: Array<{ name: string; amount: number; share: number | null }>,
+): string[] {
+  const max = Math.max(...items.map((i) => i.amount), 0);
+  return items.map((i) => {
+    const share = i.share !== null ? ` · ${Math.round(i.share)}%` : '';
+    return `<code>${escapeHtml(fitName(i.name))} ${bar(i.amount, max)} ${formatAmount(
+      i.amount,
+    )}${share}</code>`;
+  });
+}
+
+// FR-D6 — суммы по категориям за период: расходы, затем доходы.
+export function formatCategoryTotals(
+  title: string,
+  data: { totals: Record<string, number>; items: CategoryTotalsItem[] },
+): string {
+  const lines = [`📂 <b>Категории · ${escapeHtml(title)}</b>`];
+  const expenses = data.items.filter((i) => i.type === 'expense');
+  const incomes = data.items.filter((i) => i.type === 'income');
+
+  if (!expenses.length && !incomes.length) {
+    lines.push('За этот период операций нет.');
+    return lines.join('\n');
+  }
+
+  if (expenses.length) {
+    lines.push(`Расходы: <b>${formatAmount(data.totals.expense ?? 0)}</b>`, '');
+    lines.push(...amountLines(expenses));
+  }
+  if (incomes.length) {
+    lines.push('', `💰 Доходы: <b>${formatAmount(data.totals.income ?? 0)}</b>`, '');
+    lines.push(...amountLines(incomes));
+  }
+  lines.push('', 'Нажмите категорию — покажу суммы по её подкатегориям.');
+  return lines.join('\n');
+}
+
+// FR-D6 — суммы по подкатегориям одной категории за период.
+export function formatCategoryDetail(title: string, item: CategoryTotalsItem): string {
+  const kind = item.type === 'income' ? 'доходов' : item.type === 'transfer' ? 'переводов' : 'расходов';
+  const sharePart = item.share !== null ? ` · ${Math.round(item.share)}% ${kind}` : '';
+  const lines = [
+    `📂 <b>${escapeHtml(item.name)} · ${escapeHtml(title)}</b>`,
+    `Всего: <b>${formatAmount(item.amount)}</b> · ${item.count} оп.${sharePart}`,
+  ];
+
+  if (!item.children.length) {
+    lines.push('', 'Подкатегорий у этой категории за период нет.');
+    return lines.join('\n');
+  }
+  lines.push('', ...amountLines(item.children));
   return lines.join('\n');
 }
 

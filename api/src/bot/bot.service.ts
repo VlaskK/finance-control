@@ -15,6 +15,7 @@ import { EntryHandler } from './handlers/entry.handler';
 import { TransferHandler } from './handlers/transfer.handler';
 import { InfoHandler } from './handlers/info.handler';
 import { StatsHandler } from './handlers/stats.handler';
+import { CategoryHandler } from './handlers/category.handler';
 import { HistoryHandler } from './handlers/history.handler';
 import { EditHandler } from './handlers/edit.handler';
 import { BudgetHandler } from './handlers/budget.handler';
@@ -31,6 +32,7 @@ const HELP = [
   '/today — траты за сегодня',
   '/month — траты за текущий месяц',
   '/stats — аналитика за любой период',
+  '/categories — суммы по категориям и подкатегориям',
   '/history — операции: просмотр и правка',
   '/budget — бюджеты (статус и лимиты)',
   '/accounts — балансы счетов',
@@ -52,6 +54,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly transfer: TransferHandler,
     private readonly info: InfoHandler,
     private readonly stats: StatsHandler,
+    private readonly categories: CategoryHandler,
     private readonly history: HistoryHandler,
     private readonly edit: EditHandler,
     private readonly budget: BudgetHandler,
@@ -96,6 +99,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     bot.command('today', (ctx) => this.stats.command(ctx, 'd'));
     bot.command('month', (ctx) => this.stats.command(ctx, 'm'));
     bot.command('stats', (ctx) => this.stats.command(ctx, 'm'));
+    bot.command('categories', (ctx) => this.categories.command(ctx));
     bot.command('history', (ctx) => this.history.command(ctx));
     bot.command('budget', (ctx) => this.budget.command(ctx));
     bot.command('tags', (ctx) => this.info.tagsList(ctx));
@@ -118,6 +122,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         { command: 'today', description: 'Траты за сегодня' },
         { command: 'month', description: 'Траты за месяц' },
         { command: 'stats', description: 'Аналитика за любой период' },
+        { command: 'categories', description: 'Суммы по категориям и подкатегориям' },
         { command: 'history', description: 'Операции: просмотр и правка' },
         { command: 'budget', description: 'Бюджеты: статус и лимиты' },
         { command: 'accounts', description: 'Балансы счетов' },
@@ -171,6 +176,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (ns === CB.dynamics) {
       return this.stats.handleDynamics(ctx, args[0]);
     }
+    if (ns === CB.catTotals) {
+      return this.categories.handleCallback(ctx, args);
+    }
     if (ns === CB.tag) {
       return this.info.tagReport(ctx, args[0]);
     }
@@ -209,6 +217,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       case 'budget_set':
         return this.budget.handlePickCallback(ctx, data, session);
       case 'await_range':
+      case 'await_cat_range':
         // Кнопок в этом режиме нет — ждём текст с датами.
         return ctx.answerCallbackQuery();
     }
@@ -222,6 +231,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     }
     if (session?.mode === 'await_range') {
       return this.stats.handleRangeText(ctx, session);
+    }
+    if (session?.mode === 'await_cat_range') {
+      return this.categories.handleRangeText(ctx, session);
     }
     if (session?.mode === 'history' && session.awaiting) {
       return this.history.handleText(ctx, session);

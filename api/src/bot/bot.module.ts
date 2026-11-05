@@ -11,6 +11,7 @@ import { EntryHandler } from './handlers/entry.handler';
 import { TransferHandler } from './handlers/transfer.handler';
 import { InfoHandler } from './handlers/info.handler';
 import { StatsHandler } from './handlers/stats.handler';
+import { CategoryHandler } from './handlers/category.handler';
 import { HistoryHandler } from './handlers/history.handler';
 import { EditHandler } from './handlers/edit.handler';
 import { BudgetHandler } from './handlers/budget.handler';
@@ -31,6 +32,7 @@ import { BudgetHandler } from './handlers/budget.handler';
     TransferHandler,
     InfoHandler,
     StatsHandler,
+    CategoryHandler,
     HistoryHandler,
     EditHandler,
     BudgetHandler,

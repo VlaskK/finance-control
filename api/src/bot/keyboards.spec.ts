@@ -1,7 +1,9 @@
 import { type InlineKeyboard } from 'grammy';
 import {
   kbAccounts,
+  kbCategoryDetail,
   kbCategoryRoots,
+  kbCategoryTotals,
   kbConfirmDelete,
   kbHistory,
   kbHistoryFilters,
@@ -91,6 +93,41 @@ describe('kbStats', () => {
   it('диапазонный тумблер укладывается в 64 байта', () => {
     const kb = kbStats(false, 'p:s:r:20260601:20260630:i');
     assertValidCallbacks(kb);
+  });
+
+  it('есть «всё время» и переход к категориям', () => {
+    const all = kbStats(false, 'p:s:m:i')
+      .inline_keyboard.flat()
+      .map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain('p:s:a');
+    expect(all).toContain('ct:l:m');
+  });
+});
+
+describe('kbCategoryTotals / kbCategoryDetail', () => {
+  it('категория ведёт в детализацию с тем же периодом', () => {
+    const kb = kbCategoryTotals('m', [
+      { id: UUID_A, name: 'Еда' },
+      { id: UUID_B, name: 'Дом' },
+    ]);
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain(`ct:c:${UUID_A}:m`);
+    expect(all).toEqual(expect.arrayContaining(['ct:l:a', 'ct:l:pm', 'ct:r']));
+  });
+
+  it('детализация: возврат к списку и пресеты той же категории', () => {
+    const kb = kbCategoryDetail('pm', UUID_A);
+    assertValidCallbacks(kb);
+    const all = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(all).toContain('ct:l:pm');
+    expect(all).toContain(`ct:c:${UUID_A}:a`);
+    expect(all).toContain(`ct:r:${UUID_A}`);
+  });
+
+  it('свой диапазон вместе с UUID категории укладывается в 64 байта', () => {
+    assertValidCallbacks(kbCategoryDetail('r2026060120260630', UUID_A));
+    assertValidCallbacks(kbCategoryTotals('r2026060120260630', [{ id: UUID_A, name: 'Еда' }]));
   });
 });
 

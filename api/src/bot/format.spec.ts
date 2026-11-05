@@ -5,6 +5,8 @@ import {
   formatAmount,
   formatBreakdown,
   formatBudget,
+  formatCategoryDetail,
+  formatCategoryTotals,
   formatConfirmation,
   formatDynamics,
   formatStats,
@@ -32,6 +34,67 @@ describe('formatAmount', () => {
 
   it('целые без дробной части', () => {
     expect(plain(formatAmount(200))).toBe('200 ₽');
+  });
+});
+
+describe('formatCategoryTotals / formatCategoryDetail', () => {
+  const food = {
+    categoryId: 'c-food',
+    name: 'Еда',
+    type: 'expense',
+    amount: 1000,
+    count: 5,
+    share: 80,
+    children: [
+      { name: 'Продукты', amount: 700, count: 2, share: 70 },
+      { name: 'Без подкатегории', amount: 300, count: 3, share: 30 },
+    ],
+  };
+  const salary = {
+    categoryId: 'c-salary',
+    name: 'Зарплата',
+    type: 'income',
+    amount: 50_000,
+    count: 1,
+    share: 100,
+    children: [],
+  };
+
+  it('итоги по типам и строки категорий', () => {
+    const text = plain(
+      formatCategoryTotals('этот месяц', {
+        totals: { expense: 1250, income: 50_000, transfer: 0 },
+        items: [food, salary],
+      }),
+    );
+    expect(text).toContain('Категории · этот месяц');
+    expect(text).toContain('Расходы: <b>1 250 ₽</b>');
+    expect(text).toContain('Доходы: <b>50 000 ₽</b>');
+    expect(text).toContain('Еда');
+    expect(text).toContain('Зарплата');
+  });
+
+  it('пустой период — без строк категорий', () => {
+    const text = formatCategoryTotals('всё время', {
+      totals: { expense: 0, income: 0, transfer: 0 },
+      items: [],
+    });
+    expect(text).toContain('За этот период операций нет.');
+  });
+
+  it('детализация: итог категории и её подкатегории', () => {
+    const text = plain(formatCategoryDetail('прошлый месяц', food));
+    expect(text).toContain('Еда · прошлый месяц');
+    expect(text).toContain('Всего: <b>1 000 ₽</b> · 5 оп. · 80% расходов');
+    expect(text).toContain('Продукты');
+    // Имена в моноширинных строках обрезаются до 10 символов.
+    expect(text).toContain('Без подка…');
+  });
+
+  it('детализация без подкатегорий — только итог', () => {
+    const text = formatCategoryDetail('этот год', salary);
+    expect(text).toContain('100% доходов');
+    expect(text).toContain('Подкатегорий у этой категории за период нет.');
   });
 });
 
