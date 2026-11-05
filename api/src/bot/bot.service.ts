@@ -8,7 +8,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { Bot, HttpError, type Context } from 'grammy';
+import { Bot, GrammyError, type Context } from 'grammy';
 import { SessionStore } from './session';
 import { CB, parseCb } from './callbacks';
 import { EntryHandler } from './handlers/entry.handler';
@@ -41,6 +41,9 @@ const HELP = [
   '/cancel — сбросить текущий диалог',
   '/whoami — ваш Telegram ID',
 ].join('\n');
+
+// Сколько ждём первый ответ Telegram, прежде чем считать попытку неудачной.
+const GET_ME_TIMEOUT_MS = 15_000;
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -80,7 +83,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const bot = new Bot(token);
+    // timeoutSeconds по умолчанию 500: зависший запрос к заблокированному IP
+    // держал бы соединение восемь минут. 60 с больше, чем long polling (30 с),
+    // поэтому getUpdates не рвётся, а мёртвый запрос отваливается за минуту.
+    const bot = new Bot(token, { client: { timeoutSeconds: 60 } });
     this.bot = bot;
 
     bot.use(async (ctx, next) => {
@@ -147,11 +153,16 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   // Сетевой сбой в момент запуска контейнера не должен выключать бота до
   // следующего деплоя: повторяем подключение с нарастающей паузой, пока не
-  // пробьёмся. Ответ самого Telegram (GrammyError — например, неверный токен)
-  // повторять бессмысленно, на нём останавливаемся.
+  // пробьёмся. С прод-сервера (РФ) проходит примерно одно TLS-соединение к
+  // Telegram из пятнадцати, и неудачные не падают, а молча висят, — поэтому
+  // getMe ограничен своим таймаутом: без него повторять было бы нечего.
+  // Ответ самого Telegram (GrammyError — например, неверный токен) повторять
+  // бессмысленно, на нём останавливаемся.
   private async startPolling(bot: Bot): Promise<void> {
     for (let attempt = 1; !this.stopping; attempt++) {
       try {
+        // Готовый botInfo избавляет start() от собственного getMe без таймаута.
+        bot.botInfo = await this.getMeWithTimeout(bot);
         await bot.start({
           onStart: (info) =>
             this.logger.log(`Telegram-бот @${info.username} запущен (long polling).`),
@@ -159,18 +170,44 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return; // штатная остановка
       } catch (err) {
         if (this.stopping) return;
-        if (!(err instanceof HttpError)) {
+        if (err instanceof GrammyError) {
           this.bot = undefined;
-          this.logger.error(`Не удалось запустить Telegram-бота: ${(err as Error).message}`);
+          this.logger.error(`Telegram отклонил запрос, бот не запущен: ${err.message}`);
           return;
         }
         const delay = Math.min(60_000, 5_000 * attempt);
         this.logger.warn(
-          `Telegram недоступен (попытка ${attempt}): ${err.message}. Повтор через ${delay / 1000} с.`,
+          `Telegram недоступен (попытка ${attempt}): ${(err as Error).message}. ` +
+            `Повтор через ${delay / 1000} с.`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
+  }
+
+  // Заблокированный запрос не падает, а висит, поэтому ждём ответ своим таймером.
+  // Зависший запрос добьёт timeoutSeconds клиента; его отказ гасим здесь, чтобы
+  // он не всплыл как unhandled rejection уже после повторной попытки.
+  private getMeWithTimeout(bot: Bot): ReturnType<Bot['api']['getMe']> {
+    const request = bot.api.getMe();
+    request.catch(() => undefined);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Telegram не ответил за ${GET_ME_TIMEOUT_MS / 1000} с`)),
+        GET_ME_TIMEOUT_MS,
+      );
+      request.then(
+        (me) => {
+          clearTimeout(timer);
+          resolve(me);
+        },
+        (err: Error) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
   }
 
   async onModuleDestroy() {
