@@ -165,6 +165,33 @@ export interface ByCategoryResponse {
   items: ByCategoryItem[];
 }
 
+// FR-D6 — суммы по категориям и подкатегориям за период (или за всё время)
+export interface CategoryTotalsChild {
+  categoryId: string | null; // null — операции категории без подкатегории
+  name: string;
+  amount: number;
+  count: number;
+  share: number | null; // доля внутри родителя
+}
+
+export interface CategoryTotalsItem {
+  categoryId: string;
+  name: string;
+  color: string;
+  type: TxType;
+  amount: number;
+  count: number;
+  share: number | null; // доля внутри своего типа операций
+  children: CategoryTotalsChild[];
+}
+
+export interface CategoryTotalsResponse {
+  from: string | null;
+  to: string | null;
+  totals: Record<TxType, number>;
+  items: CategoryTotalsItem[];
+}
+
 export interface SeriesResponse {
   buckets: string[];
   categories: { categoryId: string; name: string; color: string }[];

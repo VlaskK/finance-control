@@ -173,11 +173,20 @@ export const analyticsByCategorySchema = z.object({
 
 // Та же разбивка по категориям, но за произвольный диапазон дат (Telegram-бот).
 // Аддитивно к analyticsByCategorySchema — контракт веба не меняется.
+// Границы необязательны: без обеих — за всё время.
 export const analyticsRangeSchema = z.object({
-  from: isoDate,
-  to: isoDate,
+  from: isoDate.optional(),
+  to: isoDate.optional(),
   includeTransfers: boolParam.optional().default(false),
   includeIncome: boolParam.optional().default(false),
+});
+
+// FR-D6 — суммы по категориям и подкатегориям за период.
+// Границы необязательны: без обеих — за всё время. Типы операций не фильтруются:
+// ответ несёт дерево целиком с типом у каждой категории, выбор — за клиентом.
+export const categoryTotalsSchema = z.object({
+  from: isoDate.optional(),
+  to: isoDate.optional(),
 });
 
 // CALC-3/4/5 (FR-E1…E3)
@@ -235,6 +244,7 @@ export type CreateRecurringDto = z.infer<typeof createRecurringSchema>;
 export type UpdateRecurringDto = z.infer<typeof updateRecurringSchema>;
 export type AnalyticsByCategoryDto = z.infer<typeof analyticsByCategorySchema>;
 export type AnalyticsRangeDto = z.infer<typeof analyticsRangeSchema>;
+export type CategoryTotalsDto = z.infer<typeof categoryTotalsSchema>;
 export type DynamicsDto = z.infer<typeof dynamicsSchema>;
 export type InflationDto = z.infer<typeof inflationSchema>;
 export type BudgetStatusDto = z.infer<typeof budgetStatusSchema>;

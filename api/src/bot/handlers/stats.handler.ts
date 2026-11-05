@@ -7,14 +7,12 @@
 import { Injectable } from '@nestjs/common';
 import { type Context } from 'grammy';
 import { AnalyticsService } from '../../analytics/analytics.service';
-import { periodRange } from '../../analytics/periods';
 import { parseDateRange } from '../parse';
-import { formatBudget, formatDynamics, formatStats } from '../format';
+import { formatBudget, formatDynamics, formatStats, RANGE_HINT } from '../format';
 import { SessionStore, type AwaitRangeState } from '../session';
 import { CB, cb } from '../callbacks';
 import { kbStats } from '../keyboards';
-
-type PresetKey = 'd' | 'y' | 'w' | 'm' | 'pm' | 'yr';
+import { resolvePreset, type PresetKey } from '../stat-period';
 
 type View =
   | { kind: 'preset'; preset: PresetKey; income: boolean }
@@ -24,10 +22,6 @@ type View =
 const packDate = (iso: string) => iso.replaceAll('-', '');
 const unpackDate = (packed: string) =>
   `${packed.slice(0, 4)}-${packed.slice(4, 6)}-${packed.slice(6, 8)}`;
-
-const RANGE_HINT =
-  'Пришлите две даты — начало и конец периода, например:\n' +
-  '<code>01.06 30.06</code> или <code>2026-06-01 2026-06-30</code>';
 
 @Injectable()
 export class StatsHandler {
@@ -96,8 +90,8 @@ export class StatsHandler {
   private async render(ctx: Context, view: View, opts: { edit: boolean }): Promise<void> {
     const { from, to, title } = this.resolve(view);
     const data = await this.analytics.byCategoryRange({
-      from,
-      to,
+      from: from ?? undefined,
+      to: to ?? undefined,
       includeTransfers: false,
       includeIncome: view.income,
     });
@@ -105,7 +99,7 @@ export class StatsHandler {
     let text = formatStats(title, data, { income: view.income });
 
     // Для месячных периодов — план/факт бюджетов, как на фронте.
-    if (view.kind === 'preset' && (view.preset === 'm' || view.preset === 'pm')) {
+    if (from && view.kind === 'preset' && (view.preset === 'm' || view.preset === 'pm')) {
       const budget = await this.analytics.budgetStatus({ month: from.slice(0, 7) });
       text += `\n\n${formatBudget(budget)}`;
     }
@@ -118,34 +112,13 @@ export class StatsHandler {
     }
   }
 
-  // Границы и заголовок представления. Пресеты считаются от сегодняшней даты (UTC).
-  private resolve(view: View): { from: string; to: string; title: string } {
+  // Границы и заголовок представления. Пресеты считаются от сегодняшней даты (UTC);
+  // у «всего времени» границ нет (from/to = null).
+  private resolve(view: View): { from: string | null; to: string | null; title: string } {
     if (view.kind === 'range') {
       return { ...view, title: `${view.from} — ${view.to}` };
     }
-
-    const today = new Date().toISOString().slice(0, 10);
-    switch (view.preset) {
-      case 'd':
-        return { from: today, to: today, title: 'сегодня' };
-      case 'y': {
-        const y = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-        return { from: y, to: y, title: 'вчера' };
-      }
-      case 'w':
-        return { ...periodRange('week', today), title: 'эта неделя' };
-      case 'm':
-        return { ...periodRange('month', today), title: 'этот месяц' };
-      case 'pm': {
-        const now = new Date();
-        const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-          .toISOString()
-          .slice(0, 10);
-        return { ...periodRange('month', prev), title: 'прошлый месяц' };
-      }
-      case 'yr':
-        return { ...periodRange('year', today), title: 'этот год' };
-    }
+    return resolvePreset(view.preset);
   }
 
   // callback_data перерисовки текущего вида с противоположным флагом доходов.

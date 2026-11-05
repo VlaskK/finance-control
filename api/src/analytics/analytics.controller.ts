@@ -4,10 +4,12 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
   analyticsByCategorySchema,
   budgetStatusSchema,
+  categoryTotalsSchema,
   dynamicsSchema,
   inflationSchema,
   type AnalyticsByCategoryDto,
   type BudgetStatusDto,
+  type CategoryTotalsDto,
   type DynamicsDto,
   type InflationDto,
 } from '../common/schemas';
@@ -22,6 +24,12 @@ export class AnalyticsController {
     @Query(new ZodValidationPipe(analyticsByCategorySchema)) dto: AnalyticsByCategoryDto,
   ) {
     return this.analytics.byCategory(dto);
+  }
+
+  // FR-D6 — суммы по категориям и подкатегориям за период (без границ — за всё время)
+  @Get('category-totals')
+  categoryTotals(@Query(new ZodValidationPipe(categoryTotalsSchema)) dto: CategoryTotalsDto) {
+    return this.analytics.categoryTotals(dto);
   }
 
   // FR-D3

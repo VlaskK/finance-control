@@ -3,6 +3,7 @@
 
 import { InlineKeyboard } from 'grammy';
 import { CB, cb } from './callbacks';
+import type { PresetKey } from './stat-period';
 
 const CANCEL_LABEL = 'Отмена';
 
@@ -186,10 +187,55 @@ export function kbStats(income: boolean, toggleData: string): InlineKeyboard {
     .text('Прош. месяц', preset('pm'))
     .text('Год', preset('yr'))
     .row()
+    .text('Всё время', preset('a'))
     .text('📅 Свой диапазон', preset('c'))
     .row()
     .text(income ? '💰 Скрыть доходы' : '💰 Показать доходы', toggleData)
     .row()
+    .text('📂 По категориям', cb(CB.catTotals, 'l', 'm'))
+    .row()
     .text('📈 Динамика 6 мес', cb(CB.dynamics, 6))
     .text('📈 12 мес', cb(CB.dynamics, 12));
+}
+
+// Пресеты периода для разбивки по категориям. data(preset) — куда ведёт кнопка
+// (список или детализация категории), customData — ввод своего диапазона.
+const CAT_PERIODS: Array<{ label: string; preset: PresetKey }> = [
+  { label: 'Неделя', preset: 'w' },
+  { label: 'Месяц', preset: 'm' },
+  { label: 'Прош. месяц', preset: 'pm' },
+  { label: 'Год', preset: 'yr' },
+  { label: 'Всё время', preset: 'a' },
+];
+
+function periodButtons(
+  kb: InlineKeyboard,
+  data: (preset: PresetKey) => string,
+  customData: string,
+): InlineKeyboard {
+  CAT_PERIODS.forEach((p, i) => {
+    kb.text(p.label, data(p.preset));
+    if (i % 3 === 2) kb.row();
+  });
+  return kb.row().text('📅 Свой диапазон', customData);
+}
+
+// FR-D6 — суммы по категориям: кнопка категории открывает её подкатегории.
+export function kbCategoryTotals(period: string, categories: NamedEntity[]): InlineKeyboard {
+  const kb = grid(
+    new InlineKeyboard(),
+    categories.map((c) => ({ label: c.name, data: cb(CB.catTotals, 'c', c.id, period) })),
+  );
+  kb.row();
+  return periodButtons(kb, (p) => cb(CB.catTotals, 'l', p), cb(CB.catTotals, 'r'));
+}
+
+// Детализация одной категории: те же пресеты + возврат к списку категорий.
+export function kbCategoryDetail(period: string, categoryId: string): InlineKeyboard {
+  const kb = new InlineKeyboard().text('‹ Все категории', cb(CB.catTotals, 'l', period)).row();
+  return periodButtons(
+    kb,
+    (p) => cb(CB.catTotals, 'c', categoryId, p),
+    cb(CB.catTotals, 'r', categoryId),
+  );
 }

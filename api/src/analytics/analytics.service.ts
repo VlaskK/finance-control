@@ -5,9 +5,11 @@ import type {
   AnalyticsByCategoryDto,
   AnalyticsRangeDto,
   BudgetStatusDto,
+  CategoryTotalsDto,
   DynamicsDto,
   InflationDto,
 } from '../common/schemas';
+import { buildCategoryTotals, type CategoryTotalsRow } from './category-totals';
 import {
   decomposeChange,
   laspeyresIndex,
@@ -62,6 +64,14 @@ export class AnalyticsService {
     return sql.raw(`(${types.join(',')})`);
   }
 
+  // Границы периода необязательны: обе пустые — за всё время (FR-D6).
+  private dateFilter(from: string | null, to: string | null) {
+    if (from && to) return sql`t.occurred_at between ${from} and ${to}`;
+    if (from) return sql`t.occurred_at >= ${from}`;
+    if (to) return sql`t.occurred_at <= ${to}`;
+    return sql`true`;
+  }
+
   // CALC-1 (FR-D2) вЂ” С‚СЂР°С‚С‹ РїРѕ РєР°С‚РµРіРѕСЂРёСЏРј Р·Р° РїРµСЂРёРѕРґ
   async byCategory(dto: AnalyticsByCategoryDto) {
     const { from, to } = periodRange(dto.period, dto.date);
@@ -69,13 +79,14 @@ export class AnalyticsService {
   }
 
   // То же за произвольный диапазон дат (Telegram-бот); контракт byCategory не меняется.
+  // Пустые границы — за всё время.
   async byCategoryRange(dto: AnalyticsRangeDto) {
-    return this.byCategoryBetween(dto.from, dto.to, dto);
+    return this.byCategoryBetween(dto.from ?? null, dto.to ?? null, dto);
   }
 
   private async byCategoryBetween(
-    from: string,
-    to: string,
+    from: string | null,
+    to: string | null,
     dto: { includeTransfers: boolean; includeIncome: boolean },
   ) {
     const rows = (await this.db.execute(sql`
@@ -85,7 +96,7 @@ export class AnalyticsService {
       from transactions t
       join categories c on c.id = t.category_id
       join categories root on root.id = coalesce(c.parent_id, c.id)
-      where t.occurred_at between ${from} and ${to}
+      where ${this.dateFilter(from, to)}
         and root.type::text in ${this.typesFilter(dto)}
       group by root.id, root.name, root.color, root.type
       order by sum(t.base_amount) desc
@@ -103,6 +114,31 @@ export class AnalyticsService {
         share: total > 0 && r.type === 'expense' ? Math.round((10000 * r.amount) / total) / 100 : null,
       })),
     };
+  }
+
+  // FR-D6 — суммы по категориям и подкатегориям за период или за всё время.
+  // Подкатегория операции — subcategory_id; если категорией указана сама
+  // подкатегория (так бывает после слияний), она и считается подкатегорией.
+  async categoryTotals(dto: CategoryTotalsDto) {
+    const from = dto.from ?? null;
+    const to = dto.to ?? null;
+
+    const rows = (await this.db.execute(sql`
+      select root.id as "categoryId", root.name as "name", root.color as "color",
+             root.type::text as "type",
+             sub.id as "subcategoryId", sub.name as "subcategoryName",
+             sum(t.base_amount)::float8 as "amount", count(*)::int as "count"
+      from transactions t
+      join categories c on c.id = t.category_id
+      join categories root on root.id = coalesce(c.parent_id, c.id)
+      left join categories sub
+             on sub.id = coalesce(t.subcategory_id,
+                                  case when c.parent_id is not null then c.id end)
+      where ${this.dateFilter(from, to)}
+      group by root.id, root.name, root.color, root.type, sub.id, sub.name
+    `)) as unknown as CategoryTotalsRow[];
+
+    return { from, to, ...buildCategoryTotals(rows) };
   }
 
   // FR-D3 вЂ” РІСЂРµРјРµРЅРЅРѕР№ СЂСЏРґ РІРЅСѓС‚СЂРё РїРµСЂРёРѕРґР° (РґРµРЅСЊ/РЅРµРґРµР»СЏ/РјРµСЃСЏС† в†’ РґРЅРё, РіРѕРґ в†’ РјРµСЃСЏС†С‹)

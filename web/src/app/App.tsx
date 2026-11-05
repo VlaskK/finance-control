@@ -3,6 +3,7 @@ import { Toaster } from '@/shared/ui/toast';
 import { EntryPage } from '@/pages/entry/EntryPage';
 import { HistoryPage } from '@/pages/history/HistoryPage';
 import { ChartsPage } from '@/pages/charts/ChartsPage';
+import { SummaryPage } from '@/pages/summary/SummaryPage';
 import { DynamicsPage } from '@/pages/dynamics/DynamicsPage';
 import { BudgetsPage } from '@/pages/budgets/BudgetsPage';
 import { AccountsPage } from '@/pages/accounts/AccountsPage';
@@ -13,6 +14,7 @@ const NAV = [
   { to: '/', label: 'Ввод', end: true },
   { to: '/history', label: 'История' },
   { to: '/charts', label: 'Графики' },
+  { to: '/summary', label: 'Сводка' },
   { to: '/dynamics', label: 'Динамика' },
   { to: '/budgets', label: 'Бюджеты' },
   { to: '/accounts', label: 'Счета' },
@@ -46,6 +48,7 @@ export function App() {
             <Route path="/" element={<EntryPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/charts" element={<ChartsPage />} />
+            <Route path="/summary" element={<SummaryPage />} />
             <Route path="/dynamics" element={<DynamicsPage />} />
             <Route path="/budgets" element={<BudgetsPage />} />
             <Route path="/accounts" element={<AccountsPage />} />

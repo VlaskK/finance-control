@@ -43,6 +43,13 @@ export interface AwaitRangeState {
   income: boolean;
 }
 
+// Разбивка по категориям → «Свой диапазон»: ждём текст с двумя датами.
+// categoryId — вернуться в детализацию этой категории, null — в список категорий.
+export interface AwaitCatRangeState {
+  mode: 'await_cat_range';
+  categoryId: string | null;
+}
+
 // Фильтры списка операций (/history); подмножество ListTransactionsDto.
 export interface HistoryFilters {
   type?: 'expense' | 'income' | 'transfer';
@@ -86,6 +93,7 @@ export type Session =
   | EntryDraft
   | TransferDraft
   | AwaitRangeState
+  | AwaitCatRangeState
   | HistoryState
   | EditState
   | BudgetSetState;
