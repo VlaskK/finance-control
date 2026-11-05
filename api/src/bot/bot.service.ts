@@ -8,7 +8,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { Bot, type Context } from 'grammy';
+import { Bot, HttpError, type Context } from 'grammy';
 import { SessionStore } from './session';
 import { CB, parseCb } from './callbacks';
 import { EntryHandler } from './handlers/entry.handler';
@@ -47,6 +47,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotService.name);
   private bot?: Bot;
   private allowed = new Set<number>();
+  private stopping = false;
 
   constructor(
     private readonly sessions: SessionStore,
@@ -117,8 +118,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     bot.catch((err) => this.logger.error(`Ошибка бота: ${err.message}`, err.error as Error));
 
-    try {
-      await bot.api.setMyCommands([
+    // Список команд — best-effort: с прод-сервера Telegram доступен через раз
+    // (DPI режет большинство новых TLS-соединений), и неудача служебного вызова
+    // не должна решать судьбу бота.
+    void bot.api
+      .setMyCommands([
         { command: 'today', description: 'Траты за сегодня' },
         { command: 'month', description: 'Траты за месяц' },
         { command: 'stats', description: 'Аналитика за любой период' },
@@ -132,21 +136,45 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         { command: 'cancel', description: 'Сбросить текущий диалог' },
         { command: 'help', description: 'Справка' },
         { command: 'whoami', description: 'Мой Telegram ID' },
-      ]);
+      ])
+      .catch((err: Error) =>
+        this.logger.warn(`Не удалось обновить список команд: ${err.message}`),
+      );
 
-      // Long polling крутится в фоне; не ждём завершения промиса.
-      void bot.start({
-        onStart: (info) =>
-          this.logger.log(`Telegram-бот @${info.username} запущен (long polling).`),
-      });
-    } catch (err) {
-      // Неверный токен или сбой сети не должны ронять API.
-      this.bot = undefined;
-      this.logger.error(`Не удалось запустить Telegram-бота: ${(err as Error).message}`);
+    // Long polling крутится в фоне; не ждём завершения промиса.
+    void this.startPolling(bot);
+  }
+
+  // Сетевой сбой в момент запуска контейнера не должен выключать бота до
+  // следующего деплоя: повторяем подключение с нарастающей паузой, пока не
+  // пробьёмся. Ответ самого Telegram (GrammyError — например, неверный токен)
+  // повторять бессмысленно, на нём останавливаемся.
+  private async startPolling(bot: Bot): Promise<void> {
+    for (let attempt = 1; !this.stopping; attempt++) {
+      try {
+        await bot.start({
+          onStart: (info) =>
+            this.logger.log(`Telegram-бот @${info.username} запущен (long polling).`),
+        });
+        return; // штатная остановка
+      } catch (err) {
+        if (this.stopping) return;
+        if (!(err instanceof HttpError)) {
+          this.bot = undefined;
+          this.logger.error(`Не удалось запустить Telegram-бота: ${(err as Error).message}`);
+          return;
+        }
+        const delay = Math.min(60_000, 5_000 * attempt);
+        this.logger.warn(
+          `Telegram недоступен (попытка ${attempt}): ${err.message}. Повтор через ${delay / 1000} с.`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 
   async onModuleDestroy() {
+    this.stopping = true;
     if (this.bot) await this.bot.stop();
   }
 
